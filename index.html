@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CompareIQ - Wellbound Difference Report Tool</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="apple-touch-icon" href="favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <nav class="navbar dark">
+        <div class="nav-brand stacked">
+            <img src="logo.png" alt="Wellbound" class="nav-logo">
+        </div>
+        <div class="nav-tabs">
+            <button class="nav-tab active" data-page="generator">
+                <i class="fas fa-play-circle"></i>
+                Run Comparison
+            </button>
+            <button class="nav-tab" data-page="viewer">
+                <i class="fas fa-chart-bar"></i>
+                Comparison View
+            </button>
+        </div>
+        <div class="nav-actions">
+            <button class="btn btn-ghost" id="helpBtn">
+                <i class="fas fa-question-circle"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Page 1: Difference Report Generator -->
+    <main id="generator-page" class="page active">
+        <div class="container">
+            <header class="page-header">
+                <h1>Run Comparison</h1>
+                <p>Upload two files to compare and generate intelligent, row-aware difference reports</p>
+            </header>
+
+            <!-- File Upload Section -->
+            <section class="upload-section">
+                <div class="unified-upload-zone" id="unified-dropzone">
+                    <input type="file" id="file-input" accept=".csv,.xlsx,.xls" multiple hidden>
+                    
+                    <!-- Empty State -->
+                    <div class="upload-empty" id="upload-empty">
+                        <div class="upload-icon-wrapper">
+                            <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                        </div>
+                        <h3>Upload Two Files to Compare</h3>
+                        <p>Drag & drop your CSV or Excel files here, or click to browse</p>
+                        <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">
+                            <i class="fas fa-folder-open"></i>
+                            Choose Files
+                        </button>
+                        <span class="upload-hint">Select both original and updated files</span>
+                    </div>
+
+                    <!-- Files Loaded State -->
+                    <div class="upload-files" id="upload-files" hidden>
+                        <div class="file-card" id="file1-card">
+                            <div class="file-card-icon original">
+                                <i class="fas fa-file-alt"></i>
+                            </div>
+                            <div class="file-card-info">
+                                <span class="file-card-label">Original File</span>
+                                <span class="file-card-name" id="file1-name">No file selected</span>
+                                <span class="file-card-meta" id="file1-meta"></span>
+                            </div>
+                            <button class="file-card-remove" id="remove-file1" hidden>
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        <button class="swap-button" id="swap-files" title="Swap files">
+                            <i class="fas fa-exchange-alt"></i>
+                        </button>
+
+                        <div class="file-card" id="file2-card">
+                            <div class="file-card-icon updated">
+                                <i class="fas fa-file-alt"></i>
+                            </div>
+                            <div class="file-card-info">
+                                <span class="file-card-label">Updated File</span>
+                                <span class="file-card-name" id="file2-name">No file selected</span>
+                                <span class="file-card-meta" id="file2-meta"></span>
+                            </div>
+                            <button class="file-card-remove" id="remove-file2" hidden>
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        <div class="upload-actions-row">
+                            <button class="btn btn-ghost upload-more" onclick="document.getElementById('file-input').click()">
+                                <i class="fas fa-folder-open"></i>
+                                Change Files
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Configuration Section -->
+            <section class="config-section" id="config-section" hidden>
+                <h2><i class="fas fa-cog"></i> Comparison Settings</h2>
+                
+                <div class="config-grid">
+                    <!-- Primary Key Selection -->
+                    <div class="config-card">
+                        <h3><i class="fas fa-key"></i> Row Identity (Primary Key)</h3>
+                        <p>Select column(s) that uniquely identify each row</p>
+                        <div class="key-selector" id="key-selector">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="autoDetectKey" checked>
+                            <span>Auto-detect primary key</span>
+                        </label>
+                    </div>
+
+                    <!-- Comparison Options -->
+                    <div class="config-card">
+                        <h3><i class="fas fa-sliders-h"></i> Comparison Options</h3>
+                        <div class="option-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="ignoreCase">
+                                <span>Ignore case differences</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="ignoreWhitespace" checked>
+                                <span>Ignore leading/trailing whitespace</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="treatReorderAsSame" checked>
+                                <span>Treat row reordering as "moved" not "changed"</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="typeAware" checked>
+                                <span>Type-aware comparison (numbers, dates, strings)</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary btn-large" id="compareBtn">
+                    <i class="fas fa-balance-scale"></i>
+                    Compare Files
+                </button>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="results-section" hidden>
+                <h2><i class="fas fa-chart-bar"></i> Comparison Results</h2>
+                
+                <!-- Key Metrics - At a Glance -->
+                <div class="key-metrics">
+                    <div class="metric-card found">
+                        <div class="metric-header">
+                            <i class="fas fa-search"></i>
+                            <span>Found Status</span>
+                        </div>
+                        <div class="metric-body">
+                            <div class="metric-stat">
+                                <span class="metric-number" id="found-count">0</span>
+                                <span class="metric-label">Found</span>
+                                <span class="metric-badge success"><i class="fas fa-check"></i></span>
+                            </div>
+                            <div class="metric-stat">
+                                <span class="metric-number" id="not-found-count">0</span>
+                                <span class="metric-label">Not Found</span>
+                                <span class="metric-badge danger"><i class="fas fa-times"></i></span>
+                            </div>
+                        </div>
+                        <div class="metric-bar">
+                            <div class="metric-bar-fill found-bar" id="found-bar"></div>
+                        </div>
+                    </div>
+                    <div class="metric-card match">
+                        <div class="metric-header">
+                            <i class="fas fa-clipboard-check"></i>
+                            <span>Status Match</span>
+                        </div>
+                        <div class="metric-body">
+                            <div class="metric-stat">
+                                <span class="metric-number" id="status-match-count">0</span>
+                                <span class="metric-label">Matched</span>
+                                <span class="metric-badge success"><i class="fas fa-check"></i></span>
+                            </div>
+                            <div class="metric-stat">
+                                <span class="metric-number" id="status-mismatch-count">0</span>
+                                <span class="metric-label">Changed</span>
+                                <span class="metric-badge warning"><i class="fas fa-exchange-alt"></i></span>
+                            </div>
+                        </div>
+                        <div class="metric-bar">
+                            <div class="metric-bar-fill match-bar" id="match-bar"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="summary-grid">
+                    <div class="summary-card summary-unchanged">
+                        <div class="summary-icon"><i class="fas fa-equals"></i></div>
+                        <div class="summary-content">
+                            <span class="summary-number" id="unchanged-count">0</span>
+                            <span class="summary-label">Unchanged</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-modified">
+                        <div class="summary-icon"><i class="fas fa-pencil-alt"></i></div>
+                        <div class="summary-content">
+                            <span class="summary-number" id="modified-count">0</span>
+                            <span class="summary-label">Modified</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-added">
+                        <div class="summary-icon"><i class="fas fa-plus"></i></div>
+                        <div class="summary-content">
+                            <span class="summary-number" id="added-count">0</span>
+                            <span class="summary-label">New Records</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-removed">
+                        <div class="summary-icon"><i class="fas fa-minus"></i></div>
+                        <div class="summary-content">
+                            <span class="summary-number" id="removed-count">0</span>
+                            <span class="summary-label">Removed</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-moved">
+                        <div class="summary-icon"><i class="fas fa-arrows-up-down"></i></div>
+                        <div class="summary-content">
+                            <span class="summary-number" id="moved-count">0</span>
+                            <span class="summary-label">Reordered</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Export Options -->
+                <div class="export-section">
+                    <h3>Export Report</h3>
+                    
+                    <div class="export-options">
+                        <div class="export-type">
+                            <h4>Report Content</h4>
+                            <div class="radio-group">
+                                <label class="radio-label">
+                                    <input type="radio" name="exportContent" value="changed" checked>
+                                    <span class="radio-custom"></span>
+                                    <span class="radio-text">
+                                        <strong>Changes Only</strong>
+                                        <small>Export only records that differ between files</small>
+                                    </span>
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="exportContent" value="all">
+                                    <span class="radio-custom"></span>
+                                    <span class="radio-text">
+                                        <strong>Full Comparison</strong>
+                                        <small>All records with change indicators</small>
+                                    </span>
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="exportContent" value="unchanged">
+                                    <span class="radio-custom"></span>
+                                    <span class="radio-text">
+                                        <strong>Unchanged Records</strong>
+                                        <small>Export only identical records</small>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="export-format">
+                            <h4>File Format</h4>
+                            <div class="format-buttons">
+                                <button class="format-btn active" data-format="csv">
+                                    <i class="fas fa-file-csv"></i>
+                                    CSV
+                                </button>
+                                <button class="format-btn" data-format="xlsx">
+                                    <i class="fas fa-file-excel"></i>
+                                    Excel
+                                </button>
+                                <button class="format-btn" data-format="pdf">
+                                    <i class="fas fa-file-pdf"></i>
+                                    PDF
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="export-actions">
+                        <button class="btn btn-primary" id="downloadReport">
+                            <i class="fas fa-download"></i>
+                            Download Report
+                        </button>
+                        <button class="btn btn-secondary" id="exportDiffView">
+                            <i class="fas fa-box"></i>
+                            Export Comparison Bundle
+                        </button>
+                        <button class="btn btn-accent" id="openViewer">
+                            <i class="fas fa-chart-bar"></i>
+                            Open in Comparison View
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Preview Section -->
+                <div class="preview-section">
+                    <div class="preview-header">
+                        <h3>Preview</h3>
+                        <div class="preview-controls">
+                            <select id="previewFilter">
+                                <option value="all">All Changes</option>
+                                <option value="modified">Modified Only</option>
+                                <option value="added">Added Only</option>
+                                <option value="removed">Removed Only</option>
+                                <option value="moved">Moved Only</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="preview-table-container">
+                        <table class="preview-table" id="preview-table">
+                            <thead></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Page 2: Difference Viewer -->
+    <main id="viewer-page" class="page">
+        <div class="container">
+            <!-- No Data State -->
+            <div class="viewer-empty" id="viewer-empty">
+                <div class="empty-content">
+                    <i class="fas fa-chart-bar empty-icon"></i>
+                    <h2>No Comparison Data</h2>
+                    <p>Run a comparison first, or import a Comparison Bundle from a colleague</p>
+                    <div class="empty-actions">
+                        <button class="btn btn-primary" id="goToGenerator">
+                            <i class="fas fa-play-circle"></i>
+                            Run Comparison
+                        </button>
+                        <span class="or-divider">or</span>
+                        <button class="btn btn-secondary" id="importDiffBtn">
+                            <i class="fas fa-box-open"></i>
+                            Import Comparison Bundle
+                        </button>
+                        <input type="file" id="importDiffInput" accept=".wbdiff,.json" hidden>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Viewer Content -->
+            <div class="viewer-content" id="viewer-content" hidden>
+                <!-- Viewer Header -->
+                <header class="viewer-header">
+                    <div class="viewer-title">
+                        <h1>Comparison View</h1>
+                        <span class="viewer-subtitle" id="viewer-subtitle">Comparing: file1.csv vs file2.csv</span>
+                    </div>
+                    <div class="viewer-actions">
+                        <button class="btn btn-ghost" id="importNewDiff">
+                            <i class="fas fa-box-open"></i>
+                            Import Bundle
+                        </button>
+                        <button class="btn btn-secondary" id="exportFromViewer">
+                            <i class="fas fa-download"></i>
+                            Export
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Granularity Controls -->
+                <div class="granularity-controls">
+                    <div class="granularity-tabs">
+                        <button class="granularity-tab active" data-level="summary">
+                            <i class="fas fa-chart-pie"></i>
+                            Summary
+                        </button>
+                        <button class="granularity-tab" data-level="rows">
+                            <i class="fas fa-table"></i>
+                            Row Level
+                        </button>
+                        <button class="granularity-tab" data-level="highlight">
+                            <i class="fas fa-highlighter"></i>
+                            Highlight
+                        </button>
+                        <button class="granularity-tab" data-level="cells">
+                            <i class="fas fa-th"></i>
+                            Cell Level
+                        </button>
+                    </div>
+                    <div class="density-control">
+                        <label>Diff Density:</label>
+                        <div class="density-buttons">
+                            <button class="density-btn" data-density="minimal">Minimal</button>
+                            <button class="density-btn active" data-density="standard">Standard</button>
+                            <button class="density-btn" data-density="verbose">Verbose</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary View -->
+                <div class="viewer-panel" id="summary-panel">
+                    <div class="panel-grid">
+                        <!-- Stats Chart -->
+                        <div class="panel-card chart-card">
+                            <h3>Change Distribution</h3>
+                            <div class="chart-container">
+                                <canvas id="diffChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Column Changes -->
+                        <div class="panel-card">
+                            <h3>Changes by Column</h3>
+                            <div class="column-changes" id="column-changes">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Quick Stats -->
+                        <div class="panel-card stats-card">
+                            <h3>Quick Statistics</h3>
+                            <div class="stats-list">
+                                <div class="stat-item">
+                                    <span class="stat-label">Total Rows (Original)</span>
+                                    <span class="stat-value" id="stat-original">0</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Total Rows (Updated)</span>
+                                    <span class="stat-value" id="stat-updated">0</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Change Rate</span>
+                                    <span class="stat-value" id="stat-rate">0%</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Most Changed Column</span>
+                                    <span class="stat-value" id="stat-column">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Expand Analytics Button -->
+                    <div class="expand-analytics-wrapper">
+                        <button class="btn btn-expand-analytics" id="expandAnalyticsBtn">
+                            <i class="fas fa-chart-line"></i>
+                            <span>Expand Analytics Dashboard</span>
+                            <i class="fas fa-chevron-down expand-icon"></i>
+                        </button>
+                    </div>
+
+                    <!-- Expanded Analytics Section -->
+                    <div class="expanded-analytics" id="expandedAnalytics" hidden>
+                        <!-- Analytics Controls Toolbar -->
+                        <div class="analytics-toolbar">
+                            <div class="toolbar-section">
+                                <label>Chart Style:</label>
+                                <select id="chartStyleSelect" class="analytics-select">
+                                    <option value="default">Default Colors</option>
+                                    <option value="vibrant">Vibrant</option>
+                                    <option value="pastel">Pastel</option>
+                                    <option value="monochrome">Monochrome</option>
+                                </select>
+                            </div>
+                            <div class="toolbar-section">
+                                <label>Show Labels:</label>
+                                <label class="toggle-switch small">
+                                    <input type="checkbox" id="showLabelsToggle" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toolbar-section">
+                                <label>Animation:</label>
+                                <label class="toggle-switch small">
+                                    <input type="checkbox" id="animationToggle" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <button class="btn btn-ghost" id="refreshAnalytics">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
+
+                        <!-- Row 1: Key Metrics Cards -->
+                        <div class="analytics-metrics-row">
+                            <div class="analytics-metric-card">
+                                <div class="metric-icon found"><i class="fas fa-check-circle"></i></div>
+                                <div class="metric-info">
+                                    <span class="metric-value" id="analytics-found-rate">0%</span>
+                                    <span class="metric-title">Found Rate</span>
+                                    <span class="metric-trend positive" id="analytics-found-trend">
+                                        <i class="fas fa-arrow-up"></i> <span>0</span> records
+                                    </span>
+                                </div>
+                                <div class="metric-sparkline">
+                                    <canvas id="foundSparkline"></canvas>
+                                </div>
+                            </div>
+                            <div class="analytics-metric-card">
+                                <div class="metric-icon match"><i class="fas fa-clipboard-check"></i></div>
+                                <div class="metric-info">
+                                    <span class="metric-value" id="analytics-match-rate">0%</span>
+                                    <span class="metric-title">Match Rate</span>
+                                    <span class="metric-trend positive" id="analytics-match-trend">
+                                        <i class="fas fa-arrow-up"></i> <span>0</span> matched
+                                    </span>
+                                </div>
+                                <div class="metric-sparkline">
+                                    <canvas id="matchSparkline"></canvas>
+                                </div>
+                            </div>
+                            <div class="analytics-metric-card">
+                                <div class="metric-icon modified"><i class="fas fa-edit"></i></div>
+                                <div class="metric-info">
+                                    <span class="metric-value" id="analytics-modified-rate">0%</span>
+                                    <span class="metric-title">Modification Rate</span>
+                                    <span class="metric-trend warning" id="analytics-modified-trend">
+                                        <i class="fas fa-pencil-alt"></i> <span>0</span> modified
+                                    </span>
+                                </div>
+                                <div class="metric-sparkline">
+                                    <canvas id="modifiedSparkline"></canvas>
+                                </div>
+                            </div>
+                            <div class="analytics-metric-card">
+                                <div class="metric-icon data"><i class="fas fa-database"></i></div>
+                                <div class="metric-info">
+                                    <span class="metric-value" id="analytics-total-records">0</span>
+                                    <span class="metric-title">Total Records</span>
+                                    <span class="metric-trend neutral" id="analytics-records-trend">
+                                        <i class="fas fa-columns"></i> <span>0</span> columns
+                                    </span>
+                                </div>
+                                <div class="metric-sparkline">
+                                    <canvas id="recordsSparkline"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Row 2: Main Charts -->
+                        <div class="analytics-charts-row">
+                            <!-- Column Value Distribution -->
+                            <div class="analytics-card wide">
+                                <div class="card-header">
+                                    <h4><i class="fas fa-chart-bar"></i> Value Distribution by Column</h4>
+                                    <div class="card-controls">
+                                        <select id="distColumnSelect" class="analytics-select">
+                                            <!-- Populated dynamically -->
+                                        </select>
+                                        <select id="distChartType" class="analytics-select">
+                                            <option value="bar">Bar Chart</option>
+                                            <option value="horizontalBar">Horizontal Bar</option>
+                                            <option value="pie">Pie Chart</option>
+                                            <option value="doughnut">Doughnut</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="chart-wrapper">
+                                    <canvas id="valueDistChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Change Type Breakdown -->
+                            <div class="analytics-card">
+                                <div class="card-header">
+                                    <h4><i class="fas fa-pie-chart"></i> Change Type Breakdown</h4>
+                                    <div class="card-controls">
+                                        <select id="breakdownChartType" class="analytics-select">
+                                            <option value="doughnut">Doughnut</option>
+                                            <option value="pie">Pie</option>
+                                            <option value="polarArea">Polar Area</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="chart-wrapper">
+                                    <canvas id="changeBreakdownChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Row 3: Column Analysis -->
+                        <div class="analytics-charts-row">
+                            <!-- Top Changed Columns -->
+                            <div class="analytics-card">
+                                <div class="card-header">
+                                    <h4><i class="fas fa-sort-amount-down"></i> Top Changed Columns</h4>
+                                    <div class="card-controls">
+                                        <select id="topColumnsCount" class="analytics-select">
+                                            <option value="5">Top 5</option>
+                                            <option value="10" selected>Top 10</option>
+                                            <option value="15">Top 15</option>
+                                            <option value="all">All</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="chart-wrapper">
+                                    <canvas id="topColumnsChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Before/After Comparison -->
+                            <div class="analytics-card wide">
+                                <div class="card-header">
+                                    <h4><i class="fas fa-exchange-alt"></i> Before/After Value Comparison</h4>
+                                    <div class="card-controls">
+                                        <select id="compareColumnSelect" class="analytics-select">
+                                            <!-- Populated dynamically -->
+                                        </select>
+                                        <button class="btn btn-ghost btn-sm" id="swapCompareView">
+                                            <i class="fas fa-random"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="chart-wrapper">
+                                    <canvas id="beforeAfterChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Row 4: Data Quality & Status -->
+                        <div class="analytics-charts-row three-col">
+                            <!-- Data Completeness -->
+                            <div class="analytics-card">
+                                <div class="card-header">
+                                    <h4><i class="fas fa-tasks"></i> Data Completeness</h4>
+                                </div>
+                                <div class="chart-wrapper">
+                                    <canvas id="completenessChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Status Distribution (if status column exists) -->
+                            <div class="analytics-card">
+                                <div class="card-header">
+                                    <h4><i class="fas fa-flag"></i> Status Distribution</h4>
+                                    <div class="card-controls">
+                                        <select id="statusColumnSelect" class="analytics-select">
+                                            <!-- Populated dynamically -->
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="chart-wrapper">
+                                    <canvas id="statusDistChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Numeric Column Stats -->
+                            <div class="analytics-card">
+                                <div class="card-header">
+                                    <h4><i class="fas fa-calculator"></i> Numeric Analysis</h4>
+                                    <div class="card-controls">
+                                        <select id="numericColumnSelect" class="analytics-select">
+                                            <!-- Populated dynamically -->
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="numeric-stats" id="numericStats">
+                                    <!-- Populated dynamically -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Row 5: Data Table Preview -->
+                        <div class="analytics-card full-width">
+                            <div class="card-header">
+                                <h4><i class="fas fa-table"></i> Top Changed Records</h4>
+                                <div class="card-controls">
+                                    <select id="changedRecordsFilter" class="analytics-select">
+                                        <option value="all">All Changes</option>
+                                        <option value="modified">Modified Only</option>
+                                        <option value="added">Added Only</option>
+                                        <option value="removed">Removed Only</option>
+                                    </select>
+                                    <select id="changedRecordsCount" class="analytics-select">
+                                        <option value="5">5 Records</option>
+                                        <option value="10" selected>10 Records</option>
+                                        <option value="25">25 Records</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="analytics-table-wrapper">
+                                <table class="analytics-table" id="changedRecordsTable">
+                                    <thead></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Row 6: Column Heatmap -->
+                        <div class="analytics-card full-width">
+                            <div class="card-header">
+                                <h4><i class="fas fa-th"></i> Column Change Heatmap</h4>
+                                <div class="card-controls">
+                                    <label class="checkbox-label small">
+                                        <input type="checkbox" id="heatmapShowValues" checked>
+                                        <span>Show Values</span>
+                                    </label>
+                                    <select id="heatmapColorScale" class="analytics-select">
+                                        <option value="blue">Blue Scale</option>
+                                        <option value="heat">Heat Scale</option>
+                                        <option value="green">Green Scale</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="heatmap-container" id="columnHeatmap">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row Level View -->
+                <div class="viewer-panel" id="rows-panel" hidden>
+                    <div class="panel-toolbar">
+                        <div class="toolbar-left">
+                            <div class="filter-group">
+                                <label>Show:</label>
+                                <div class="filter-chips">
+                                    <button class="filter-chip active" data-filter="all">All</button>
+                                    <button class="filter-chip" data-filter="modified">
+                                        <span class="chip-dot modified"></span>Modified
+                                    </button>
+                                    <button class="filter-chip" data-filter="added">
+                                        <span class="chip-dot added"></span>Added
+                                    </button>
+                                    <button class="filter-chip" data-filter="removed">
+                                        <span class="chip-dot removed"></span>Removed
+                                    </button>
+                                    <button class="filter-chip" data-filter="moved">
+                                        <span class="chip-dot moved"></span>Moved
+                                    </button>
+                                    <button class="filter-chip" data-filter="unchanged">
+                                        <span class="chip-dot unchanged"></span>Unchanged
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="toolbar-right">
+                            <div class="search-box">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="rowSearch" placeholder="Search rows...">
+                            </div>
+                            <button class="btn btn-ghost" id="toggleColumnFilters">
+                                <i class="fas fa-filter"></i>
+                                <span id="filterBtnText">Add Filters</span>
+                            </button>
+                            <button class="btn btn-ghost" id="clearColumnFilters" hidden>
+                                <i class="fas fa-times"></i>
+                                Clear Filters
+                            </button>
+                        </div>
+                    </div>
+                    <div class="row-view-container">
+                        <table class="row-table" id="row-table">
+                            <thead></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="pagination">
+                        <button class="btn btn-ghost" id="prevPage"><i class="fas fa-chevron-left"></i></button>
+                        <span id="pageInfo">Page 1 of 1</span>
+                        <button class="btn btn-ghost" id="nextPage"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
+
+                <!-- Highlight View -->
+                <div class="viewer-panel" id="highlight-panel" hidden>
+                    <!-- Color Legend & Controls -->
+                    <div class="highlight-controls">
+                        <div class="color-legend">
+                            <span class="legend-title">Color Key:</span>
+                            <div class="legend-items">
+                                <div class="legend-item" data-type="modified">
+                                    <input type="color" id="color-modified" value="#f59e0b">
+                                    <span>Modified</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" data-filter="modified" checked>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="legend-item" data-type="added">
+                                    <input type="color" id="color-added" value="#22c55e">
+                                    <span>Added</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" data-filter="added" checked>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="legend-item" data-type="removed">
+                                    <input type="color" id="color-removed" value="#ef4444">
+                                    <span>Removed</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" data-filter="removed" checked>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="legend-item" data-type="unchanged">
+                                    <input type="color" id="color-unchanged" value="#6b7280">
+                                    <span>Unchanged</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" data-filter="unchanged" checked>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="highlight-actions">
+                            <button class="btn btn-ghost" id="resetColors">
+                                <i class="fas fa-undo"></i> Reset Colors
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Side by Side Highlight View -->
+                    <div class="highlight-container">
+                        <div class="highlight-side original-side">
+                            <div class="highlight-header">
+                                <h3><i class="fas fa-file-alt"></i> Original</h3>
+                                <span class="highlight-filename" id="highlight-original-name">file1.csv</span>
+                            </div>
+                            <div class="highlight-content" id="highlight-original">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+                        <div class="highlight-side updated-side">
+                            <div class="highlight-header">
+                                <h3><i class="fas fa-file-alt"></i> Updated</h3>
+                                <span class="highlight-filename" id="highlight-updated-name">file2.csv</span>
+                            </div>
+                            <div class="highlight-content" id="highlight-updated">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Stats Bar -->
+                    <div class="highlight-stats">
+                        <span class="stat-pill modified"><span id="hl-modified-count">0</span> Modified</span>
+                        <span class="stat-pill added"><span id="hl-added-count">0</span> Added</span>
+                        <span class="stat-pill removed"><span id="hl-removed-count">0</span> Removed</span>
+                        <span class="stat-pill unchanged"><span id="hl-unchanged-count">0</span> Unchanged</span>
+                    </div>
+                </div>
+
+                <!-- Cell Level View -->
+                <div class="viewer-panel" id="cells-panel" hidden>
+                    <div class="cell-view-container">
+                        <div class="side-by-side">
+                            <div class="side-panel original-side">
+                                <div class="side-header">
+                                    <h3><i class="fas fa-file-alt"></i> Original</h3>
+                                    <span class="side-filename" id="original-filename">file1.csv</span>
+                                </div>
+                                <div class="side-content" id="original-content">
+                                    <!-- Populated dynamically -->
+                                </div>
+                            </div>
+                            <div class="side-panel updated-side">
+                                <div class="side-header">
+                                    <h3><i class="fas fa-file-alt"></i> Updated</h3>
+                                    <span class="side-filename" id="updated-filename">file2.csv</span>
+                                </div>
+                                <div class="side-content" id="updated-content">
+                                    <!-- Populated dynamically -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cell-navigation">
+                        <button class="btn btn-ghost" id="prevChange">
+                            <i class="fas fa-arrow-up"></i> Previous Change
+                        </button>
+                        <span id="changeCounter">Change 1 of 0</span>
+                        <button class="btn btn-ghost" id="nextChange">
+                            Next Change <i class="fas fa-arrow-down"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Help Modal -->
+    <div class="modal" id="helpModal" hidden>
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>How to Use CompareIQ</h2>
+                <button class="modal-close" id="closeHelp"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="help-section">
+                    <h3><i class="fas fa-play-circle"></i> Run Comparison</h3>
+                    <ol>
+                        <li>Upload your original and updated files (CSV or Excel)</li>
+                        <li>Select the primary key column(s) that uniquely identify each row</li>
+                        <li>Configure comparison options as needed</li>
+                        <li>Click "Compare Files" to analyze differences</li>
+                        <li>Choose your export options and download the report</li>
+                    </ol>
+                </div>
+                <div class="help-section">
+                    <h3><i class="fas fa-chart-bar"></i> Comparison View</h3>
+                    <ol>
+                        <li>View comparisons at different granularity levels (Summary → Rows → Cells)</li>
+                        <li>Use filters to focus on specific change types</li>
+                        <li>Adjust diff density for more or less detail</li>
+                        <li>Import Comparison Bundles shared by colleagues</li>
+                    </ol>
+                </div>
+                <div class="help-section">
+                    <h3><i class="fas fa-lightbulb"></i> Key Features</h3>
+                    <ul>
+                        <li><strong>Found Status:</strong> Quickly see which records exist in both files</li>
+                        <li><strong>Status Match:</strong> Track if status columns changed (Note: blank and "6" are treated as "inactive")</li>
+                        <li>Row reordering is detected automatically - moved rows won't appear as deleted/added</li>
+                        <li>Use composite keys for tables without a single unique identifier</li>
+                        <li>Export Comparison Bundles to share with colleagues</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div class="modal" id="exportModal" hidden>
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Export Options</h2>
+                <button class="modal-close" id="closeExport"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="export-modal-options">
+                    <!-- Content populated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading" hidden>
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <span>Processing...</span>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
