@@ -22,7 +22,8 @@ const state = {
     currentGranularity: 'summary',
     chart: null,
     columnFiltersVisible: false,
-    columnFilters: {}  // { columnName: filterValue }
+    columnFilters: {},  // { columnName: filterValue }
+    showMovedRows: false  // Whether to display moved/reordered rows
 };
 
 // ========================================
@@ -562,6 +563,9 @@ function runComparison() {
                 typeAware: document.getElementById('typeAware').checked
             };
             
+            // Update state for moved rows visibility
+            state.showMovedRows = document.getElementById('showMovedRows').checked;
+            
             state.diffResult = performDiff(state.data1, state.data2, state.primaryKeys, options);
             displayResults();
         } catch (error) {
@@ -811,11 +815,33 @@ function displayResults() {
     document.getElementById('match-bar').style.width = `${matchPercent}%`;
     
     // Update summary counts
-    document.getElementById('unchanged-count').textContent = state.diffResult.unchanged.length;
+    // When showMovedRows is off, add moved count to unchanged
+    const displayUnchangedCount = state.showMovedRows 
+        ? state.diffResult.unchanged.length 
+        : state.diffResult.unchanged.length + state.diffResult.moved.length;
+    
+    document.getElementById('unchanged-count').textContent = displayUnchangedCount;
     document.getElementById('modified-count').textContent = state.diffResult.modified.length;
     document.getElementById('added-count').textContent = state.diffResult.added.length;
     document.getElementById('removed-count').textContent = state.diffResult.removed.length;
     document.getElementById('moved-count').textContent = state.diffResult.moved.length;
+    
+    // Show/hide moved summary card based on setting
+    const movedCard = document.querySelector('.summary-moved');
+    if (movedCard) {
+        movedCard.style.display = state.showMovedRows ? '' : 'none';
+    }
+    
+    // Show/hide "Moved Only" option in preview filter
+    const previewFilter = document.getElementById('previewFilter');
+    const movedOption = previewFilter?.querySelector('option[value="moved"]');
+    if (movedOption) {
+        movedOption.style.display = state.showMovedRows ? '' : 'none';
+        // If currently filtering by moved but moved is hidden, reset to all
+        if (!state.showMovedRows && previewFilter.value === 'moved') {
+            previewFilter.value = 'all';
+        }
+    }
     
     // Update preview
     updatePreviewTable();
@@ -859,7 +885,8 @@ function updatePreviewTable() {
         });
     }
     
-    if (filter === 'all' || filter === 'moved') {
+    // Only show moved rows if the setting is enabled
+    if (state.showMovedRows && (filter === 'all' || filter === 'moved')) {
         state.diffResult.moved.forEach(item => {
             rows.push({ status: 'moved', data: item.data, originalPos: item.originalPosition, newPos: item.updatedPosition });
         });
@@ -983,14 +1010,17 @@ function prepareChangedRowsData() {
         rows.push({ _status: 'REMOVED', ...item.data });
     });
     
-    state.diffResult.moved.forEach(item => {
-        rows.push({ 
-            _status: 'MOVED', 
-            _from_position: item.originalPosition + 1,
-            _to_position: item.updatedPosition + 1,
-            ...item.data 
+    // Only include moved rows if the setting is enabled
+    if (state.showMovedRows) {
+        state.diffResult.moved.forEach(item => {
+            rows.push({ 
+                _status: 'MOVED', 
+                _from_position: item.originalPosition + 1,
+                _to_position: item.updatedPosition + 1,
+                ...item.data 
+            });
         });
-    });
+    }
     
     return rows;
 }
@@ -1001,6 +1031,13 @@ function prepareAllRowsData() {
     state.diffResult.unchanged.forEach(item => {
         rows.push({ _status: 'UNCHANGED', ...item.data });
     });
+    
+    // When showMovedRows is off, treat moved as unchanged
+    if (!state.showMovedRows) {
+        state.diffResult.moved.forEach(item => {
+            rows.push({ _status: 'UNCHANGED', ...item.data });
+        });
+    }
     
     state.diffResult.modified.forEach(item => {
         const row = { _status: 'MODIFIED', ...item.updated };
@@ -1018,18 +1055,30 @@ function prepareAllRowsData() {
         rows.push({ _status: 'REMOVED', ...item.data });
     });
     
-    state.diffResult.moved.forEach(item => {
-        rows.push({ 
-            _status: 'MOVED', 
-            ...item.data 
+    // Only include moved rows with MOVED status if setting is enabled
+    if (state.showMovedRows) {
+        state.diffResult.moved.forEach(item => {
+            rows.push({ 
+                _status: 'MOVED', 
+                ...item.data 
+            });
         });
-    });
+    }
     
     return rows;
 }
 
 function prepareUnchangedRowsData() {
-    return state.diffResult.unchanged.map(item => item.data);
+    const rows = state.diffResult.unchanged.map(item => item.data);
+    
+    // When showMovedRows is off, include moved rows as unchanged
+    if (!state.showMovedRows) {
+        state.diffResult.moved.forEach(item => {
+            rows.push(item.data);
+        });
+    }
+    
+    return rows;
 }
 
 function downloadCSV(data, title) {
@@ -1043,7 +1092,11 @@ function downloadCSV(data, title) {
 function downloadExcel(data, title) {
     const wb = XLSX.utils.book_new();
     
-    // Create header sheet
+    // Create header sheet - adjust counts based on showMovedRows setting
+    const displayUnchangedCount = state.showMovedRows 
+        ? state.diffResult.unchanged.length 
+        : state.diffResult.unchanged.length + state.diffResult.moved.length;
+    
     const headerData = [
         ['WELLBOUND DIFFERENCE REPORT'],
         [''],
@@ -1054,12 +1107,16 @@ function downloadExcel(data, title) {
         [`Primary Key(s): ${state.diffResult.meta.primaryKeys.join(', ')}`],
         [''],
         ['SUMMARY'],
-        [`Unchanged Rows: ${state.diffResult.unchanged.length}`],
+        [`Unchanged Rows: ${displayUnchangedCount}`],
         [`Modified Rows: ${state.diffResult.modified.length}`],
         [`Added Rows: ${state.diffResult.added.length}`],
-        [`Removed Rows: ${state.diffResult.removed.length}`],
-        [`Moved Rows: ${state.diffResult.moved.length}`]
+        [`Removed Rows: ${state.diffResult.removed.length}`]
     ];
+    
+    // Only include moved row count if the setting is enabled
+    if (state.showMovedRows) {
+        headerData.push([`Moved Rows: ${state.diffResult.moved.length}`]);
+    }
     
     const wsHeader = XLSX.utils.aoa_to_sheet(headerData);
     XLSX.utils.book_append_sheet(wb, wsHeader, 'Summary');
@@ -1093,13 +1150,20 @@ async function downloadPDF(data, title) {
     doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 48);
     doc.text(`Original: ${state.diffResult.meta.file1Name} | Updated: ${state.diffResult.meta.file2Name}`, 14, 54);
     
-    // Summary
+    // Summary - adjust counts based on showMovedRows setting
     doc.setFontSize(12);
     doc.setTextColor(0);
     doc.text('Summary', 14, 66);
     
+    const pdfUnchangedCount = state.showMovedRows 
+        ? state.diffResult.unchanged.length 
+        : state.diffResult.unchanged.length + state.diffResult.moved.length;
+    
     doc.setFontSize(10);
-    doc.text(`Unchanged: ${state.diffResult.unchanged.length} | Modified: ${state.diffResult.modified.length} | Added: ${state.diffResult.added.length} | Removed: ${state.diffResult.removed.length} | Moved: ${state.diffResult.moved.length}`, 14, 74);
+    const summaryText = state.showMovedRows 
+        ? `Unchanged: ${state.diffResult.unchanged.length} | Modified: ${state.diffResult.modified.length} | Added: ${state.diffResult.added.length} | Removed: ${state.diffResult.removed.length} | Moved: ${state.diffResult.moved.length}`
+        : `Unchanged: ${pdfUnchangedCount} | Modified: ${state.diffResult.modified.length} | Added: ${state.diffResult.added.length} | Removed: ${state.diffResult.removed.length}`;
+    doc.text(summaryText, 14, 74);
     
     // Table - ALL rows, no limit
     const headers = Object.keys(data[0] || {});
@@ -1163,7 +1227,8 @@ function exportDiffViewFile() {
         version: '1.0',
         type: 'wellbound-diff',
         ...state.diffResult,
-        headers: state.headers
+        headers: state.headers,
+        showMovedRows: state.showMovedRows  // Include the setting in the bundle
     };
     
     const content = JSON.stringify(diffData, null, 2);
@@ -1174,7 +1239,11 @@ function exportDiffViewFile() {
 }
 
 function generateReportHeader(title) {
-    return `# WELLBOUND DIFFERENCE REPORT
+    const headerUnchangedCount = state.showMovedRows 
+        ? state.diffResult.unchanged.length 
+        : state.diffResult.unchanged.length + state.diffResult.moved.length;
+    
+    let header = `# WELLBOUND DIFFERENCE REPORT
 # ${title}
 # Generated: ${new Date().toLocaleString()}
 # Original File: ${state.diffResult.meta.file1Name}
@@ -1182,11 +1251,17 @@ function generateReportHeader(title) {
 # Primary Key(s): ${state.diffResult.meta.primaryKeys.join(', ')}
 #
 # Summary:
-# - Unchanged Rows: ${state.diffResult.unchanged.length}
+# - Unchanged Rows: ${headerUnchangedCount}
 # - Modified Rows: ${state.diffResult.modified.length}
 # - Added Rows: ${state.diffResult.added.length}
-# - Removed Rows: ${state.diffResult.removed.length}
+# - Removed Rows: ${state.diffResult.removed.length}`;
+    
+    if (state.showMovedRows) {
+        header += `
 # - Moved Rows: ${state.diffResult.moved.length}`;
+    }
+    
+    return header;
 }
 
 function downloadFile(content, filename, mimeType) {
@@ -1350,6 +1425,9 @@ function handleDiffImport(e) {
             state.diffResult = data;
             state.headers = data.headers || [];
             
+            // Restore showMovedRows setting from bundle (default to false if not present)
+            state.showMovedRows = data.showMovedRows ?? false;
+            
             // Mock file objects for display
             state.file1 = { name: data.meta?.file1Name || 'Original' };
             state.file2 = { name: data.meta?.file2Name || 'Updated' };
@@ -1379,6 +1457,19 @@ function updateViewerContent() {
     // Update filenames in cell view
     document.getElementById('original-filename').textContent = state.file1?.name || 'Original';
     document.getElementById('updated-filename').textContent = state.file2?.name || 'Updated';
+    
+    // Show/hide moved filter chip based on setting
+    const movedFilterChip = document.querySelector('.filter-chip[data-filter="moved"]');
+    if (movedFilterChip) {
+        movedFilterChip.style.display = state.showMovedRows ? '' : 'none';
+        // If currently filtering by moved but moved is hidden, reset to all
+        if (!state.showMovedRows && state.currentFilter === 'moved') {
+            state.currentFilter = 'all';
+            document.querySelectorAll('.filter-chip').forEach(chip => {
+                chip.classList.toggle('active', chip.dataset.filter === 'all');
+            });
+        }
+    }
     
     updateViewerPanel();
 }
@@ -1818,13 +1909,34 @@ function updateChangeBreakdownChart() {
     
     if (!state.diffResult) return;
     
-    const data = [
-        state.diffResult.unchanged?.length || 0,
-        state.diffResult.modified?.length || 0,
-        state.diffResult.added?.length || 0,
-        state.diffResult.removed?.length || 0,
-        state.diffResult.moved?.length || 0
-    ];
+    // When showMovedRows is off, add moved count to unchanged
+    const displayUnchangedCount = state.showMovedRows 
+        ? (state.diffResult.unchanged?.length || 0)
+        : (state.diffResult.unchanged?.length || 0) + (state.diffResult.moved?.length || 0);
+    
+    // Build data and labels based on showMovedRows setting
+    const labels = state.showMovedRows 
+        ? ['Unchanged', 'Modified', 'Added', 'Removed', 'Moved']
+        : ['Unchanged', 'Modified', 'Added', 'Removed'];
+    
+    const data = state.showMovedRows 
+        ? [
+            state.diffResult.unchanged?.length || 0,
+            state.diffResult.modified?.length || 0,
+            state.diffResult.added?.length || 0,
+            state.diffResult.removed?.length || 0,
+            state.diffResult.moved?.length || 0
+        ]
+        : [
+            displayUnchangedCount,
+            state.diffResult.modified?.length || 0,
+            state.diffResult.added?.length || 0,
+            state.diffResult.removed?.length || 0
+        ];
+    
+    const colors = state.showMovedRows 
+        ? ['#6b7280', '#f59e0b', '#22c55e', '#ef4444', '#8b5cf6']
+        : ['#6b7280', '#f59e0b', '#22c55e', '#ef4444'];
     
     const canvas = document.getElementById('changeBreakdownChart');
     if (!canvas) return;
@@ -1836,10 +1948,10 @@ function updateChangeBreakdownChart() {
     analyticsCharts.changeBreakdownChart = new Chart(canvas.getContext('2d'), {
         type: chartType,
         data: {
-            labels: ['Unchanged', 'Modified', 'Added', 'Removed', 'Moved'],
+            labels,
             datasets: [{
                 data,
-                backgroundColor: ['#6b7280', '#f59e0b', '#22c55e', '#ef4444', '#8b5cf6'],
+                backgroundColor: colors,
                 borderWidth: 0
             }]
         },
@@ -2248,25 +2360,42 @@ function updateDiffChart() {
         state.chart.destroy();
     }
     
+    // When showMovedRows is off, add moved count to unchanged
+    const displayUnchangedCount = state.showMovedRows 
+        ? state.diffResult.unchanged.length 
+        : state.diffResult.unchanged.length + state.diffResult.moved.length;
+    
+    // Build labels and data based on showMovedRows setting
+    const labels = state.showMovedRows 
+        ? ['Unchanged', 'Modified', 'Added', 'Removed', 'Moved']
+        : ['Unchanged', 'Modified', 'Added', 'Removed'];
+    
+    const data = state.showMovedRows 
+        ? [
+            state.diffResult.unchanged.length,
+            state.diffResult.modified.length,
+            state.diffResult.added.length,
+            state.diffResult.removed.length,
+            state.diffResult.moved.length
+        ]
+        : [
+            displayUnchangedCount,
+            state.diffResult.modified.length,
+            state.diffResult.added.length,
+            state.diffResult.removed.length
+        ];
+    
+    const colors = state.showMovedRows 
+        ? ['#6b7280', '#f59e0b', '#22c55e', '#ef4444', '#8b5cf6']
+        : ['#6b7280', '#f59e0b', '#22c55e', '#ef4444'];
+    
     state.chart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Unchanged', 'Modified', 'Added', 'Removed', 'Moved'],
+            labels,
             datasets: [{
-                data: [
-                    state.diffResult.unchanged.length,
-                    state.diffResult.modified.length,
-                    state.diffResult.added.length,
-                    state.diffResult.removed.length,
-                    state.diffResult.moved.length
-                ],
-                backgroundColor: [
-                    '#6b7280',
-                    '#f59e0b',
-                    '#22c55e',
-                    '#ef4444',
-                    '#8b5cf6'
-                ],
+                data,
+                backgroundColor: colors,
                 borderWidth: 0
             }]
         },
@@ -2337,7 +2466,8 @@ function updateRowsPanel() {
         });
     }
     
-    if (state.currentFilter === 'all' || state.currentFilter === 'moved') {
+    // Only include moved rows if the setting is enabled
+    if (state.showMovedRows && (state.currentFilter === 'all' || state.currentFilter === 'moved')) {
         state.diffResult.moved.forEach(item => {
             rows.push({ status: 'moved', data: item.data, key: item.key, originalPos: item.originalPosition, newPos: item.updatedPosition });
         });
@@ -2511,7 +2641,8 @@ function updateRowsPanelBody() {
         });
     }
     
-    if (state.currentFilter === 'all' || state.currentFilter === 'moved') {
+    // Only include moved rows if the setting is enabled
+    if (state.showMovedRows && (state.currentFilter === 'all' || state.currentFilter === 'moved')) {
         state.diffResult.moved.forEach(item => {
             rows.push({ status: 'moved', data: item.data, key: item.key, originalPos: item.originalPosition, newPos: item.updatedPosition });
         });
@@ -2633,6 +2764,29 @@ function updateHighlightPanel() {
         lineNum++;
     });
     
+    // When showMovedRows is off, treat moved rows as unchanged
+    if (!state.showMovedRows) {
+        state.diffResult.moved?.forEach(item => {
+            const hidden = !filters.unchanged ? 'hidden' : '';
+            const keyVal = item.data[keyCol] || '';
+            const dataPreview = getRowPreview(item.data);
+            
+            originalHTML += `<div class="highlight-row unchanged ${hidden}" style="border-left-color: ${colors.unchanged}">
+                <span class="highlight-row-number">${lineNum}</span>
+                <span class="highlight-row-key">${escapeHtml(String(keyVal))}</span>
+                <span class="highlight-row-data">${escapeHtml(dataPreview)}</span>
+            </div>`;
+            
+            updatedHTML += `<div class="highlight-row unchanged ${hidden}" style="border-left-color: ${colors.unchanged}">
+                <span class="highlight-row-number">${lineNum}</span>
+                <span class="highlight-row-key">${escapeHtml(String(keyVal))}</span>
+                <span class="highlight-row-data">${escapeHtml(dataPreview)}</span>
+            </div>`;
+            
+            lineNum++;
+        });
+    }
+    
     // Process modified rows
     state.diffResult.modified.forEach(item => {
         const hidden = !filters.modified ? 'hidden' : '';
@@ -2708,7 +2862,12 @@ function updateHighlightPanel() {
     document.getElementById('hl-modified-count').textContent = state.diffResult.modified.length;
     document.getElementById('hl-added-count').textContent = state.diffResult.added.length;
     document.getElementById('hl-removed-count').textContent = state.diffResult.removed.length;
-    document.getElementById('hl-unchanged-count').textContent = state.diffResult.unchanged.length;
+    
+    // When showMovedRows is off, count moved rows as unchanged
+    const hlUnchangedCount = state.showMovedRows 
+        ? state.diffResult.unchanged.length 
+        : state.diffResult.unchanged.length + (state.diffResult.moved?.length || 0);
+    document.getElementById('hl-unchanged-count').textContent = hlUnchangedCount;
 }
 
 function getRowPreview(row) {
@@ -2757,6 +2916,19 @@ function updateCellsPanel() {
             key: item.key
         });
     });
+    
+    // When showMovedRows is off, treat moved rows as unchanged
+    if (!state.showMovedRows) {
+        state.diffResult.moved?.forEach((item) => {
+            allRows.push({ 
+                type: 'unchanged', 
+                originalData: item.data, 
+                updatedData: item.data, 
+                line: lineNum++,
+                key: item.key
+            });
+        });
+    }
     
     // Add modified rows
     state.diffResult.modified.forEach((item) => {
