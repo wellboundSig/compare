@@ -23,7 +23,24 @@ const state = {
     chart: null,
     columnFiltersVisible: false,
     columnFilters: {},  // { columnName: filterValue }
-    showMovedRows: false  // Whether to display moved/reordered rows
+    showMovedRows: false,  // Whether to display moved/reordered rows
+    // Highlight view specific state
+    highlightSyncScroll: false,  // Whether to sync scroll both sides
+    highlightColumnFilter: [],   // Array of column names to filter changes by (empty = all)
+    // Color settings for persistence
+    highlightColors: {
+        modified: '#f59e0b',
+        added: '#22c55e',
+        removed: '#ef4444',
+        unchanged: '#6b7280'
+    },
+    // Type filters for highlight view
+    highlightTypeFilters: {
+        modified: true,
+        added: true,
+        removed: true,
+        unchanged: true
+    }
 };
 
 // ========================================
@@ -1222,13 +1239,350 @@ async function downloadPDF(data, title) {
     doc.save(`${sanitizeFilename(title)}.pdf`);
 }
 
+async function exportHighlightPDF() {
+    if (!state.diffResult) {
+        alert('No comparison data to export');
+        return;
+    }
+    
+    showLoading(true);
+    
+    try {
+        const { jsPDF } = window.jspdf;
+        // Landscape orientation for side-by-side view
+        const doc = new jsPDF('landscape', 'mm', 'a4');
+        
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 10;
+        const halfWidth = (pageWidth - margin * 3) / 2;
+        const rowHeight = 8;
+        const headerHeight = 25;
+        const footerHeight = 15;
+        const contentHeight = pageHeight - margin - headerHeight - footerHeight;
+        const rowsPerPage = Math.floor(contentHeight / rowHeight);
+        
+        // Get current colors from the UI
+        const colors = {
+            modified: document.getElementById('color-modified')?.value || '#f59e0b',
+            added: document.getElementById('color-added')?.value || '#22c55e',
+            removed: document.getElementById('color-removed')?.value || '#ef4444',
+            unchanged: document.getElementById('color-unchanged')?.value || '#6b7280'
+        };
+        
+        // Get current filter state
+        const filters = {};
+        document.querySelectorAll('#highlight-panel .legend-item .toggle-switch input').forEach(input => {
+            if (input.dataset.filter) {
+                filters[input.dataset.filter] = input.checked;
+            }
+        });
+        
+        // Get primary key column
+        const keyCol = state.diffResult.meta?.primaryKeys?.[0] || state.headers[0];
+        
+        // Check column filter
+        const hasColumnFilter = state.highlightColumnFilter.length > 0;
+        
+        // Build row data matching the display order
+        const rows = [];
+        
+        // Unchanged rows
+        if (filters.unchanged !== false) {
+            state.diffResult.unchanged.forEach(item => {
+                const keyVal = item.data[keyCol] || '';
+                const preview = getRowPreviewForPDF(item.data);
+                rows.push({
+                    type: 'unchanged',
+                    color: colors.unchanged,
+                    original: { key: keyVal, data: preview },
+                    updated: { key: keyVal, data: preview }
+                });
+            });
+            
+            // Moved rows (if hidden, treat as unchanged)
+            if (!state.showMovedRows) {
+                state.diffResult.moved?.forEach(item => {
+                    const keyVal = item.data[keyCol] || '';
+                    const preview = getRowPreviewForPDF(item.data);
+                    rows.push({
+                        type: 'unchanged',
+                        color: colors.unchanged,
+                        original: { key: keyVal, data: preview },
+                        updated: { key: keyVal, data: preview }
+                    });
+                });
+            }
+        }
+        
+        // Modified rows excluded by column filter (shown as unchanged)
+        if (hasColumnFilter && filters.unchanged !== false) {
+            state.diffResult.modified
+                .filter(item => !item.changes.some(c => state.highlightColumnFilter.includes(c.column)))
+                .forEach(item => {
+                    const keyVal = item.original[keyCol] || '';
+                    const preview = getRowPreviewForPDF(item.updated);
+                    rows.push({
+                        type: 'unchanged',
+                        color: colors.unchanged,
+                        original: { key: keyVal, data: preview },
+                        updated: { key: keyVal, data: preview }
+                    });
+                });
+        }
+        
+        // Modified rows
+        if (filters.modified !== false) {
+            const filteredModified = hasColumnFilter 
+                ? state.diffResult.modified.filter(item => 
+                    item.changes.some(c => state.highlightColumnFilter.includes(c.column)))
+                : state.diffResult.modified;
+            
+            filteredModified.forEach(item => {
+                const keyVal = item.original[keyCol] || '';
+                const originalPreview = getRowPreviewForPDF(item.original);
+                const updatedPreview = getRowPreviewForPDF(item.updated);
+                rows.push({
+                    type: 'modified',
+                    color: colors.modified,
+                    badge: 'Modified',
+                    original: { key: keyVal, data: originalPreview },
+                    updated: { key: keyVal, data: updatedPreview }
+                });
+            });
+        }
+        
+        // Removed rows
+        if (filters.removed !== false) {
+            state.diffResult.removed.forEach(item => {
+                const keyVal = item.data[keyCol] || '';
+                const preview = getRowPreviewForPDF(item.data);
+                rows.push({
+                    type: 'removed',
+                    color: colors.removed,
+                    badge: 'Removed',
+                    original: { key: keyVal, data: preview },
+                    updated: { key: '—', data: 'Record removed', italic: true }
+                });
+            });
+        }
+        
+        // Added rows
+        if (filters.added !== false) {
+            state.diffResult.added.forEach(item => {
+                const keyVal = item.data[keyCol] || '';
+                const preview = getRowPreviewForPDF(item.data);
+                rows.push({
+                    type: 'added',
+                    color: colors.added,
+                    badge: 'Added',
+                    original: { key: '—', data: 'New record', italic: true },
+                    updated: { key: keyVal, data: preview }
+                });
+            });
+        }
+        
+        if (rows.length === 0) {
+            alert('No rows to export with current filters');
+            showLoading(false);
+            return;
+        }
+        
+        // Calculate total pages
+        const totalPages = Math.ceil(rows.length / rowsPerPage);
+        
+        // Helper to convert hex to RGB
+        const hexToRGB = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 0, g: 0, b: 0 };
+        };
+        
+        // Draw each page
+        for (let page = 0; page < totalPages; page++) {
+            if (page > 0) doc.addPage();
+            
+            // Header
+            doc.setFontSize(14);
+            doc.setTextColor(37, 99, 235);
+            doc.text('WELLBOUND - Side-by-Side Comparison', margin, margin + 5);
+            
+            doc.setFontSize(9);
+            doc.setTextColor(100);
+            const originalName = state.file1?.name || 'Original';
+            const updatedName = state.file2?.name || 'Updated';
+            doc.text(`${originalName} vs ${updatedName}`, margin, margin + 11);
+            doc.text(`Page ${page + 1} of ${totalPages}`, pageWidth - margin - 30, margin + 5);
+            
+            // Column headers
+            const headerY = margin + headerHeight - 5;
+            
+            // Original side header
+            doc.setFillColor(248, 250, 252);
+            doc.rect(margin, headerY - 5, halfWidth, 8, 'F');
+            doc.setFontSize(10);
+            doc.setTextColor(50);
+            doc.setFont(undefined, 'bold');
+            doc.text('Original', margin + 5, headerY);
+            
+            // Updated side header
+            doc.rect(margin * 2 + halfWidth, headerY - 5, halfWidth, 8, 'F');
+            doc.text('Updated', margin * 2 + halfWidth + 5, headerY);
+            doc.setFont(undefined, 'normal');
+            
+            // Draw rows for this page
+            const startRow = page * rowsPerPage;
+            const endRow = Math.min(startRow + rowsPerPage, rows.length);
+            
+            for (let i = startRow; i < endRow; i++) {
+                const row = rows[i];
+                const rowIndex = i - startRow;
+                const y = margin + headerHeight + (rowIndex * rowHeight);
+                
+                const rgb = hexToRGB(row.color);
+                
+                // Row background (light tint for changed rows)
+                if (row.type !== 'unchanged') {
+                    doc.setFillColor(rgb.r, rgb.g, rgb.b, 0.1);
+                    // Left side
+                    doc.rect(margin, y, halfWidth, rowHeight - 1, 'F');
+                    // Right side
+                    doc.rect(margin * 2 + halfWidth, y, halfWidth, rowHeight - 1, 'F');
+                }
+                
+                // Left border indicator
+                doc.setFillColor(rgb.r, rgb.g, rgb.b);
+                doc.rect(margin, y, 2, rowHeight - 1, 'F');
+                doc.rect(margin * 2 + halfWidth, y, 2, rowHeight - 1, 'F');
+                
+                // Row number
+                doc.setFontSize(7);
+                doc.setTextColor(150);
+                const rowNum = String(i + 1);
+                doc.text(rowNum, margin + 5, y + 5);
+                
+                // Original side content
+                doc.setFontSize(8);
+                if (row.original.italic) {
+                    doc.setTextColor(150);
+                    doc.setFont(undefined, 'italic');
+                } else {
+                    doc.setTextColor(50);
+                    doc.setFont(undefined, 'normal');
+                }
+                
+                const origKeyText = truncateText(String(row.original.key), 15);
+                const origDataText = truncateText(row.original.data, 50);
+                doc.text(origKeyText, margin + 15, y + 5);
+                doc.text(origDataText, margin + 45, y + 5);
+                
+                // Badge on original side for removed
+                if (row.type === 'removed') {
+                    doc.setFillColor(rgb.r, rgb.g, rgb.b);
+                    doc.roundedRect(margin + halfWidth - 22, y + 1, 18, 5, 1, 1, 'F');
+                    doc.setFontSize(5);
+                    doc.setTextColor(255);
+                    doc.text('REMOVED', margin + halfWidth - 20, y + 4.5);
+                }
+                
+                // Updated side content
+                doc.setFontSize(8);
+                if (row.updated.italic) {
+                    doc.setTextColor(150);
+                    doc.setFont(undefined, 'italic');
+                } else {
+                    doc.setTextColor(50);
+                    doc.setFont(undefined, 'normal');
+                }
+                
+                const updKeyText = truncateText(String(row.updated.key), 15);
+                const updDataText = truncateText(row.updated.data, 50);
+                doc.text(updKeyText, margin * 2 + halfWidth + 5, y + 5);
+                doc.text(updDataText, margin * 2 + halfWidth + 35, y + 5);
+                
+                // Badge on updated side for modified/added
+                if (row.type === 'modified' || row.type === 'added') {
+                    doc.setFillColor(rgb.r, rgb.g, rgb.b);
+                    const badgeText = row.type === 'modified' ? 'MODIFIED' : 'ADDED';
+                    const badgeWidth = row.type === 'modified' ? 20 : 15;
+                    doc.roundedRect(margin * 2 + halfWidth + halfWidth - badgeWidth - 4, y + 1, badgeWidth, 5, 1, 1, 'F');
+                    doc.setFontSize(5);
+                    doc.setTextColor(255);
+                    doc.text(badgeText, margin * 2 + halfWidth + halfWidth - badgeWidth - 2, y + 4.5);
+                }
+                
+                // Divider line
+                doc.setDrawColor(230);
+                doc.line(margin, y + rowHeight - 1, margin + halfWidth, y + rowHeight - 1);
+                doc.line(margin * 2 + halfWidth, y + rowHeight - 1, margin * 2 + halfWidth * 2, y + rowHeight - 1);
+            }
+            
+            // Footer with stats
+            const footerY = pageHeight - footerHeight + 5;
+            doc.setFontSize(7);
+            doc.setTextColor(120);
+            
+            const statsText = `Unchanged: ${state.diffResult.unchanged.length} | Modified: ${state.diffResult.modified.length} | Added: ${state.diffResult.added.length} | Removed: ${state.diffResult.removed.length}`;
+            doc.text(statsText, margin, footerY);
+            doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin - 50, footerY);
+            
+            // Center divider line
+            doc.setDrawColor(200);
+            doc.line(margin + halfWidth + margin/2, margin + headerHeight - 5, margin + halfWidth + margin/2, pageHeight - footerHeight);
+        }
+        
+        // Save the PDF
+        const timestamp = new Date().toISOString().slice(0, 10);
+        doc.save(`highlight_comparison_${timestamp}.pdf`);
+        
+    } catch (error) {
+        console.error('PDF export error:', error);
+        alert(`PDF export error: ${error.message}`);
+    }
+    
+    showLoading(false);
+}
+
+// Helper function to get row preview for PDF (simpler than HTML version)
+function getRowPreviewForPDF(data) {
+    if (!data) return '';
+    const values = Object.values(data).slice(0, 5);
+    return values.map(v => String(v ?? '')).join(' | ');
+}
+
+// Helper function to truncate text for PDF
+function truncateText(text, maxLen) {
+    if (!text) return '';
+    const str = String(text);
+    return str.length > maxLen ? str.substring(0, maxLen - 2) + '...' : str;
+}
+
 function exportDiffViewFile() {
+    // Capture current viewer state for bundle
+    const viewerState = {
+        currentFilter: state.currentFilter,
+        currentDensity: state.currentDensity,
+        currentGranularity: state.currentGranularity,
+        currentPage: state.currentPage,
+        columnFilters: state.columnFilters,
+        columnFiltersVisible: state.columnFiltersVisible,
+        showMovedRows: state.showMovedRows,
+        // Highlight view state
+        highlightSyncScroll: state.highlightSyncScroll,
+        highlightColumnFilter: state.highlightColumnFilter,
+        highlightColors: state.highlightColors,
+        highlightTypeFilters: state.highlightTypeFilters
+    };
+    
     const diffData = {
-        version: '1.0',
+        version: '1.1',  // Bumped version for new state format
         type: 'wellbound-diff',
         ...state.diffResult,
         headers: state.headers,
-        showMovedRows: state.showMovedRows  // Include the setting in the bundle
+        viewerState  // Include all viewer state in the bundle
     };
     
     const content = JSON.stringify(diffData, null, 2);
@@ -1295,6 +1649,9 @@ function initializeViewerControls() {
     document.getElementById('importNewDiff')?.addEventListener('click', () => {
         document.getElementById('importDiffInput').click();
     });
+    
+    // Clear comparison button
+    document.getElementById('clearComparison')?.addEventListener('click', clearComparison);
     
     // Granularity tabs
     document.querySelectorAll('.granularity-tab').forEach(tab => {
@@ -1381,8 +1738,8 @@ function initializeViewerControls() {
         document.getElementById('results-section').scrollIntoView({ behavior: 'smooth' });
     });
     
-    // Highlight panel controls
-    document.querySelectorAll('#highlight-panel .toggle-switch input').forEach(toggle => {
+    // Highlight panel type filter controls (in legend items)
+    document.querySelectorAll('#highlight-panel .legend-item .toggle-switch input').forEach(toggle => {
         toggle.addEventListener('change', () => {
             updateHighlightPanel();
         });
@@ -1401,12 +1758,244 @@ function initializeViewerControls() {
         document.getElementById('color-added').value = '#22c55e';
         document.getElementById('color-removed').value = '#ef4444';
         document.getElementById('color-unchanged').value = '#6b7280';
+        state.highlightColors = {
+            modified: '#f59e0b',
+            added: '#22c55e',
+            removed: '#ef4444',
+            unchanged: '#6b7280'
+        };
         updateHighlightPanel();
     });
+    
+    // Export highlight view as PDF
+    document.getElementById('exportHighlightPDF')?.addEventListener('click', exportHighlightPDF);
+    
+    // Track color changes for state persistence
+    document.querySelectorAll('#highlight-panel input[type="color"]').forEach(picker => {
+        picker.addEventListener('change', () => {
+            state.highlightColors = {
+                modified: document.getElementById('color-modified')?.value || '#f59e0b',
+                added: document.getElementById('color-added')?.value || '#22c55e',
+                removed: document.getElementById('color-removed')?.value || '#ef4444',
+                unchanged: document.getElementById('color-unchanged')?.value || '#6b7280'
+            };
+        });
+    });
+    
+    // Track type filter changes for state persistence
+    document.querySelectorAll('#highlight-panel .legend-item .toggle-switch input').forEach(toggle => {
+        toggle.addEventListener('change', () => {
+            const filterType = toggle.dataset.filter;
+            if (filterType) {
+                state.highlightTypeFilters[filterType] = toggle.checked;
+            }
+        });
+    });
+    
+    // Sync scroll toggle
+    document.getElementById('syncScrollToggle')?.addEventListener('change', (e) => {
+        state.highlightSyncScroll = e.target.checked;
+        updateSyncScrollState();
+    });
+    
+    // Column filter dropdown
+    initializeColumnFilterDropdown();
     
     // Cell level navigation
     document.getElementById('prevChange')?.addEventListener('click', navigateToPrevChange);
     document.getElementById('nextChange')?.addEventListener('click', navigateToNextChange);
+}
+
+// ========================================
+// Sync Scroll Functionality
+// ========================================
+
+function updateSyncScrollState() {
+    const container = document.querySelector('.highlight-container');
+    const originalContent = document.getElementById('highlight-original');
+    const updatedContent = document.getElementById('highlight-updated');
+    
+    if (!container || !originalContent || !updatedContent) return;
+    
+    if (state.highlightSyncScroll) {
+        container.classList.add('sync-scroll');
+        
+        // Add scroll sync listeners
+        originalContent.removeEventListener('scroll', syncScrollOriginal);
+        updatedContent.removeEventListener('scroll', syncScrollUpdated);
+        originalContent.addEventListener('scroll', syncScrollOriginal);
+        updatedContent.addEventListener('scroll', syncScrollUpdated);
+    } else {
+        container.classList.remove('sync-scroll');
+        
+        // Remove scroll sync listeners
+        originalContent.removeEventListener('scroll', syncScrollOriginal);
+        updatedContent.removeEventListener('scroll', syncScrollUpdated);
+    }
+}
+
+let isSyncingScroll = false;
+
+function syncScrollOriginal() {
+    if (isSyncingScroll) return;
+    isSyncingScroll = true;
+    
+    const originalContent = document.getElementById('highlight-original');
+    const updatedContent = document.getElementById('highlight-updated');
+    
+    if (originalContent && updatedContent) {
+        updatedContent.scrollTop = originalContent.scrollTop;
+    }
+    
+    requestAnimationFrame(() => {
+        isSyncingScroll = false;
+    });
+}
+
+function syncScrollUpdated() {
+    if (isSyncingScroll) return;
+    isSyncingScroll = true;
+    
+    const originalContent = document.getElementById('highlight-original');
+    const updatedContent = document.getElementById('highlight-updated');
+    
+    if (originalContent && updatedContent) {
+        originalContent.scrollTop = updatedContent.scrollTop;
+    }
+    
+    requestAnimationFrame(() => {
+        isSyncingScroll = false;
+    });
+}
+
+// ========================================
+// Column Filter Dropdown
+// ========================================
+
+function initializeColumnFilterDropdown() {
+    const dropdownBtn = document.getElementById('columnFilterBtn');
+    const dropdownMenu = document.getElementById('columnFilterMenu');
+    const selectAllCheckbox = document.getElementById('selectAllColumns');
+    const applyBtn = document.getElementById('applyColumnFilter');
+    
+    if (!dropdownBtn || !dropdownMenu) return;
+    
+    // Toggle dropdown
+    dropdownBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const wasHidden = dropdownMenu.hidden;
+        dropdownMenu.hidden = !wasHidden;
+        dropdownBtn.classList.toggle('open', wasHidden);
+        
+        if (wasHidden) {
+            // Populate columns when opening (was hidden, now showing)
+            populateColumnFilterDropdown();
+        }
+    });
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.column-filter-dropdown')) {
+            dropdownMenu.hidden = true;
+            dropdownBtn.classList.remove('open');
+        }
+    });
+    
+    // Select all checkbox
+    selectAllCheckbox?.addEventListener('change', (e) => {
+        const checkboxes = document.querySelectorAll('#columnFilterItems input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            cb.checked = e.target.checked;
+        });
+    });
+    
+    // Apply button
+    applyBtn?.addEventListener('click', () => {
+        applyColumnFilter();
+        dropdownMenu.hidden = true;
+        dropdownBtn.classList.remove('open');
+    });
+}
+
+function populateColumnFilterDropdown() {
+    const container = document.getElementById('columnFilterItems');
+    if (!container || !state.headers) return;
+    
+    // Get all columns that have changes
+    const columnsWithChanges = new Set();
+    
+    state.diffResult?.modified?.forEach(item => {
+        item.changes?.forEach(change => {
+            columnsWithChanges.add(change.column);
+        });
+    });
+    
+    // Build checkbox list
+    container.innerHTML = state.headers.map(header => {
+        const hasChanges = columnsWithChanges.has(header);
+        const isSelected = state.highlightColumnFilter.length === 0 || 
+                          state.highlightColumnFilter.includes(header);
+        
+        return `
+            <label class="checkbox-label">
+                <input type="checkbox" value="${escapeHtml(header)}" ${isSelected ? 'checked' : ''}>
+                <span>${escapeHtml(header)}</span>
+                ${hasChanges ? '<span class="column-change-badge">has changes</span>' : ''}
+            </label>
+        `;
+    }).join('');
+    
+    // Update select all checkbox state
+    updateSelectAllState();
+    
+    // Add change listeners to update select all
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', updateSelectAllState);
+    });
+}
+
+function updateSelectAllState() {
+    const selectAllCheckbox = document.getElementById('selectAllColumns');
+    const checkboxes = document.querySelectorAll('#columnFilterItems input[type="checkbox"]');
+    
+    if (!selectAllCheckbox || checkboxes.length === 0) return;
+    
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+    
+    selectAllCheckbox.checked = allChecked;
+    selectAllCheckbox.indeterminate = someChecked && !allChecked;
+}
+
+function applyColumnFilter() {
+    const checkboxes = document.querySelectorAll('#columnFilterItems input[type="checkbox"]:checked');
+    const selectedColumns = Array.from(checkboxes).map(cb => cb.value);
+    
+    // If all columns selected, store empty array (means "all")
+    if (selectedColumns.length === state.headers.length) {
+        state.highlightColumnFilter = [];
+    } else {
+        state.highlightColumnFilter = selectedColumns;
+    }
+    
+    // Update label
+    updateColumnFilterLabel();
+    
+    // Refresh highlight panel
+    updateHighlightPanel();
+}
+
+function updateColumnFilterLabel() {
+    const label = document.getElementById('columnFilterLabel');
+    if (!label) return;
+    
+    if (state.highlightColumnFilter.length === 0) {
+        label.textContent = 'All Columns';
+    } else if (state.highlightColumnFilter.length === 1) {
+        label.textContent = state.highlightColumnFilter[0];
+    } else {
+        label.textContent = `${state.highlightColumnFilter.length} Columns`;
+    }
 }
 
 function handleDiffImport(e) {
@@ -1425,12 +2014,41 @@ function handleDiffImport(e) {
             state.diffResult = data;
             state.headers = data.headers || [];
             
-            // Restore showMovedRows setting from bundle (default to false if not present)
-            state.showMovedRows = data.showMovedRows ?? false;
+            // Restore viewer state from bundle (support both old and new format)
+            if (data.viewerState) {
+                // New format with full viewer state
+                state.currentFilter = data.viewerState.currentFilter || 'all';
+                state.currentDensity = data.viewerState.currentDensity || 'standard';
+                state.currentGranularity = data.viewerState.currentGranularity || 'summary';
+                state.currentPage = data.viewerState.currentPage || 1;
+                state.columnFilters = data.viewerState.columnFilters || {};
+                state.columnFiltersVisible = data.viewerState.columnFiltersVisible || false;
+                state.showMovedRows = data.viewerState.showMovedRows ?? false;
+                state.highlightSyncScroll = data.viewerState.highlightSyncScroll ?? false;
+                state.highlightColumnFilter = data.viewerState.highlightColumnFilter || [];
+                state.highlightColors = data.viewerState.highlightColors || {
+                    modified: '#f59e0b',
+                    added: '#22c55e',
+                    removed: '#ef4444',
+                    unchanged: '#6b7280'
+                };
+                state.highlightTypeFilters = data.viewerState.highlightTypeFilters || {
+                    modified: true,
+                    added: true,
+                    removed: true,
+                    unchanged: true
+                };
+            } else {
+                // Old format - just restore showMovedRows
+                state.showMovedRows = data.showMovedRows ?? false;
+            }
             
             // Mock file objects for display
             state.file1 = { name: data.meta?.file1Name || 'Original' };
             state.file2 = { name: data.meta?.file2Name || 'Updated' };
+            
+            // Apply restored state to UI
+            applyRestoredViewerState();
             
             updateViewerContent();
         } catch (error) {
@@ -1438,6 +2056,121 @@ function handleDiffImport(e) {
         }
     };
     reader.readAsText(file);
+}
+
+function applyRestoredViewerState() {
+    // Apply granularity tab
+    document.querySelectorAll('.granularity-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.level === state.currentGranularity);
+    });
+    
+    // Apply density button
+    document.querySelectorAll('.density-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.density === state.currentDensity);
+    });
+    
+    // Apply filter chips
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.filter === state.currentFilter);
+    });
+    
+    // Apply column filters visible state for rows panel
+    const toggleFiltersBtn = document.getElementById('toggleColumnFilters');
+    const filterBtnText = document.getElementById('filterBtnText');
+    const clearFiltersBtn = document.getElementById('clearColumnFilters');
+    
+    if (toggleFiltersBtn && filterBtnText && clearFiltersBtn) {
+        if (state.columnFiltersVisible) {
+            toggleFiltersBtn.classList.add('active');
+            filterBtnText.textContent = 'Hide Filters';
+            clearFiltersBtn.hidden = false;
+        } else {
+            toggleFiltersBtn.classList.remove('active');
+            filterBtnText.textContent = 'Add Filters';
+            clearFiltersBtn.hidden = true;
+        }
+    }
+    
+    // Apply highlight colors
+    if (state.highlightColors) {
+        const colorModified = document.getElementById('color-modified');
+        const colorAdded = document.getElementById('color-added');
+        const colorRemoved = document.getElementById('color-removed');
+        const colorUnchanged = document.getElementById('color-unchanged');
+        
+        if (colorModified) colorModified.value = state.highlightColors.modified;
+        if (colorAdded) colorAdded.value = state.highlightColors.added;
+        if (colorRemoved) colorRemoved.value = state.highlightColors.removed;
+        if (colorUnchanged) colorUnchanged.value = state.highlightColors.unchanged;
+    }
+    
+    // Apply highlight type filters
+    if (state.highlightTypeFilters) {
+        document.querySelectorAll('#highlight-panel .legend-item .toggle-switch input[data-filter]').forEach(input => {
+            const filterType = input.dataset.filter;
+            if (state.highlightTypeFilters.hasOwnProperty(filterType)) {
+                input.checked = state.highlightTypeFilters[filterType];
+            }
+        });
+    }
+    
+    // Apply sync scroll toggle
+    const syncScrollToggle = document.getElementById('syncScrollToggle');
+    if (syncScrollToggle) {
+        syncScrollToggle.checked = state.highlightSyncScroll;
+    }
+    
+    // Update column filter label (will be applied when highlight panel is shown)
+    updateColumnFilterLabel();
+}
+
+function clearComparison() {
+    // Reset comparison-related state
+    state.diffResult = null;
+    state.headers = [];
+    state.currentPage = 1;
+    state.currentFilter = 'all';
+    state.columnFilters = {};
+    state.columnFiltersVisible = false;
+    state.highlightColumnFilter = [];
+    state.highlightSyncScroll = false;
+    
+    // Reset highlight type filters to defaults
+    state.highlightTypeFilters = {
+        modified: true,
+        added: true,
+        removed: true,
+        unchanged: true
+    };
+    
+    // Reset highlight colors to defaults
+    state.highlightColors = {
+        modified: '#f59e0b',
+        added: '#22c55e',
+        removed: '#ef4444',
+        unchanged: '#6b7280'
+    };
+    
+    // Show empty state, hide viewer content
+    document.getElementById('viewer-empty').hidden = false;
+    document.getElementById('viewer-content').hidden = true;
+    
+    // Reset UI controls to defaults
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.filter === 'all');
+    });
+    
+    document.querySelectorAll('.granularity-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.level === 'summary');
+    });
+    state.currentGranularity = 'summary';
+    
+    // Reset sync scroll toggle
+    const syncScrollToggle = document.getElementById('syncScrollToggle');
+    if (syncScrollToggle) syncScrollToggle.checked = false;
+    
+    // Reset column filter label
+    updateColumnFilterLabel();
 }
 
 function updateViewerContent() {
@@ -2718,10 +3451,15 @@ function updateHighlightPanel() {
     document.getElementById('highlight-original-name').textContent = state.file1?.name || 'Original';
     document.getElementById('highlight-updated-name').textContent = state.file2?.name || 'Updated';
     
+    // Update column filter label
+    updateColumnFilterLabel();
+    
     // Get current filter state from toggles
     const filters = {};
-    document.querySelectorAll('#highlight-panel .toggle-switch input').forEach(input => {
-        filters[input.dataset.filter] = input.checked;
+    document.querySelectorAll('#highlight-panel .legend-item .toggle-switch input').forEach(input => {
+        if (input.dataset.filter) {
+            filters[input.dataset.filter] = input.checked;
+        }
     });
     
     // Get custom colors
@@ -2742,6 +3480,28 @@ function updateHighlightPanel() {
     
     // Get primary key column for display
     const keyCol = state.diffResult.meta?.primaryKeys?.[0] || state.headers[0];
+    
+    // Check if column filter is active
+    const hasColumnFilter = state.highlightColumnFilter.length > 0;
+    
+    // Filter modified rows based on column filter
+    const filteredModified = hasColumnFilter 
+        ? state.diffResult.modified.filter(item => {
+            // Check if any of the changes are in the selected columns
+            return item.changes.some(change => 
+                state.highlightColumnFilter.includes(change.column)
+            );
+        })
+        : state.diffResult.modified;
+    
+    // When column filter is active, modified rows that don't match become "unchanged"
+    const columnFilterExcludedModified = hasColumnFilter 
+        ? state.diffResult.modified.filter(item => {
+            return !item.changes.some(change => 
+                state.highlightColumnFilter.includes(change.column)
+            );
+        })
+        : [];
     
     // Process unchanged rows
     state.diffResult.unchanged.forEach(item => {
@@ -2787,12 +3547,39 @@ function updateHighlightPanel() {
         });
     }
     
-    // Process modified rows
-    state.diffResult.modified.forEach(item => {
+    // Process modified rows that were excluded by column filter as unchanged
+    columnFilterExcludedModified.forEach(item => {
+        const hidden = !filters.unchanged ? 'hidden' : '';
+        const keyVal = item.original[keyCol] || '';
+        const dataPreview = getRowPreview(item.updated);
+        
+        originalHTML += `<div class="highlight-row unchanged ${hidden}" style="border-left-color: ${colors.unchanged}">
+            <span class="highlight-row-number">${lineNum}</span>
+            <span class="highlight-row-key">${escapeHtml(String(keyVal))}</span>
+            <span class="highlight-row-data">${escapeHtml(dataPreview)}</span>
+        </div>`;
+        
+        updatedHTML += `<div class="highlight-row unchanged ${hidden}" style="border-left-color: ${colors.unchanged}">
+            <span class="highlight-row-number">${lineNum}</span>
+            <span class="highlight-row-key">${escapeHtml(String(keyVal))}</span>
+            <span class="highlight-row-data">${escapeHtml(dataPreview)}</span>
+        </div>`;
+        
+        lineNum++;
+    });
+    
+    // Process filtered modified rows
+    filteredModified.forEach(item => {
         const hidden = !filters.modified ? 'hidden' : '';
         const keyVal = item.original[keyCol] || '';
         const originalPreview = getRowPreview(item.original);
-        const updatedPreview = getRowPreviewWithChanges(item.updated, item.changes);
+        
+        // Filter changes to only show selected columns
+        const filteredChanges = hasColumnFilter 
+            ? item.changes.filter(c => state.highlightColumnFilter.includes(c.column))
+            : item.changes;
+        
+        const updatedPreview = getRowPreviewWithChanges(item.updated, filteredChanges);
         
         originalHTML += `<div class="highlight-row modified ${hidden}" style="border-left-color: ${colors.modified}; background: ${hexToRgba(colors.modified, 0.1)}">
             <span class="highlight-row-number">${lineNum}</span>
@@ -2858,16 +3645,22 @@ function updateHighlightPanel() {
     originalContent.innerHTML = originalHTML;
     updatedContent.innerHTML = updatedHTML;
     
-    // Update stats
-    document.getElementById('hl-modified-count').textContent = state.diffResult.modified.length;
+    // Update stats - account for column filter
+    const displayedModifiedCount = filteredModified.length;
+    document.getElementById('hl-modified-count').textContent = displayedModifiedCount;
     document.getElementById('hl-added-count').textContent = state.diffResult.added.length;
     document.getElementById('hl-removed-count').textContent = state.diffResult.removed.length;
     
     // When showMovedRows is off, count moved rows as unchanged
-    const hlUnchangedCount = state.showMovedRows 
+    // Also add rows excluded by column filter
+    let hlUnchangedCount = state.showMovedRows 
         ? state.diffResult.unchanged.length 
         : state.diffResult.unchanged.length + (state.diffResult.moved?.length || 0);
+    hlUnchangedCount += columnFilterExcludedModified.length;
     document.getElementById('hl-unchanged-count').textContent = hlUnchangedCount;
+    
+    // Update sync scroll state
+    updateSyncScrollState();
 }
 
 function getRowPreview(row) {
