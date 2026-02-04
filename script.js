@@ -69,6 +69,11 @@ function initializeNavigation() {
             switchPage(pageId);
             navTabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
+            
+            // If switching to viewer, update the content
+            if (pageId === 'viewer') {
+                updateViewerContent();
+            }
         });
     });
 
@@ -1649,6 +1654,14 @@ function initializeViewerControls() {
     document.getElementById('importNewDiff')?.addEventListener('click', () => {
         document.getElementById('importDiffInput').click();
     });
+    
+    // Import bundle from main page
+    document.getElementById('importBundleMain')?.addEventListener('click', () => {
+        document.getElementById('importDiffInput').click();
+    });
+    
+    // Export bundle from viewer
+    document.getElementById('exportBundleFromViewer')?.addEventListener('click', exportDiffViewFile);
     
     // Clear comparison button
     document.getElementById('clearComparison')?.addEventListener('click', clearComparison);

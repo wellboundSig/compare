@@ -62,6 +62,16 @@
                             Choose Files
                         </button>
                         <span class="upload-hint">Select both original and updated files</span>
+                        
+                        <div class="upload-divider">
+                            <span>or</span>
+                        </div>
+                        
+                        <button class="btn btn-secondary" id="importBundleMain">
+                            <i class="fas fa-box-open"></i>
+                            Import Comparison Bundle
+                        </button>
+                        <span class="upload-hint-subtle">Load a previously saved comparison from a colleague</span>
                     </div>
 
                     <!-- Files Loaded State -->
@@ -381,9 +391,13 @@
                             <i class="fas fa-box-open"></i>
                             Import Bundle
                         </button>
+                        <button class="btn btn-secondary" id="exportBundleFromViewer">
+                            <i class="fas fa-file-export"></i>
+                            Export Bundle
+                        </button>
                         <button class="btn btn-secondary" id="exportFromViewer">
                             <i class="fas fa-download"></i>
-                            Export
+                            Export Report
                         </button>
                         <button class="btn btn-ghost btn-clear" id="clearComparison" title="Clear comparison">
                             <i class="fas fa-times"></i>

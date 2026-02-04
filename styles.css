@@ -447,6 +447,37 @@ body {
     margin-top: 4px;
 }
 
+.upload-divider {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    max-width: 300px;
+    margin: 20px 0 16px;
+}
+
+.upload-divider::before,
+.upload-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.upload-divider span {
+    font-size: 0.813rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.upload-hint-subtle {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+    opacity: 0.8;
+}
+
 /* Files Loaded State */
 .upload-files {
     display: flex;
