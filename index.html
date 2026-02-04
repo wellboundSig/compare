@@ -74,6 +74,40 @@
                         <span class="upload-hint-subtle">Load a previously saved comparison from a colleague</span>
                     </div>
 
+                    <!-- Bundle Loaded Success State -->
+                    <div class="bundle-success" id="bundle-success" hidden>
+                        <div class="bundle-success-icon">
+                            <i class="fas fa-check-circle"></i>
+                            <div class="success-ring"></div>
+                        </div>
+                        <h3>Bundle Loaded Successfully!</h3>
+                        <p class="bundle-success-details">
+                            <span id="bundle-file-info">Comparison data ready to view</span>
+                        </p>
+                        <div class="bundle-stats">
+                            <div class="bundle-stat">
+                                <span class="bundle-stat-value" id="bundle-modified">0</span>
+                                <span class="bundle-stat-label">Modified</span>
+                            </div>
+                            <div class="bundle-stat">
+                                <span class="bundle-stat-value" id="bundle-added">0</span>
+                                <span class="bundle-stat-label">Added</span>
+                            </div>
+                            <div class="bundle-stat">
+                                <span class="bundle-stat-value" id="bundle-removed">0</span>
+                                <span class="bundle-stat-label">Removed</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-lg" id="openComparisonFromBundle">
+                            <i class="fas fa-chart-bar"></i>
+                            Open in Comparison View
+                        </button>
+                        <button class="btn btn-ghost" id="loadDifferentBundle">
+                            <i class="fas fa-redo"></i>
+                            Load Different Bundle
+                        </button>
+                    </div>
+
                     <!-- Files Loaded State -->
                     <div class="upload-files" id="upload-files" hidden>
                         <div class="file-card" id="file1-card">

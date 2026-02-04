@@ -380,6 +380,7 @@ function updateFileDisplay() {
     const dropzone = document.getElementById('unified-dropzone');
     const emptyState = document.getElementById('upload-empty');
     const filesState = document.getElementById('upload-files');
+    const bundleSuccess = document.getElementById('bundle-success');
     
     const hasAnyFile = state.file1 || state.file2;
     
@@ -387,6 +388,7 @@ function updateFileDisplay() {
         dropzone.classList.add('has-files');
         emptyState.hidden = true;
         filesState.hidden = false;
+        if (bundleSuccess) bundleSuccess.hidden = true;
         
         // Update file 1 card
         const file1Card = document.getElementById('file1-card');
@@ -1660,6 +1662,24 @@ function initializeViewerControls() {
         document.getElementById('importDiffInput').click();
     });
     
+    // Open comparison view from bundle success state
+    document.getElementById('openComparisonFromBundle')?.addEventListener('click', () => {
+        switchPage('viewer');
+        document.querySelectorAll('.nav-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.page === 'viewer');
+        });
+        updateViewerContent();
+    });
+    
+    // Load different bundle (reset to initial state)
+    document.getElementById('loadDifferentBundle')?.addEventListener('click', () => {
+        // Hide success state, show empty state
+        document.getElementById('bundle-success').hidden = true;
+        document.getElementById('upload-empty').hidden = false;
+        // Trigger import dialog
+        document.getElementById('importDiffInput').click();
+    });
+    
     // Export bundle from viewer
     document.getElementById('exportBundleFromViewer')?.addEventListener('click', exportDiffViewFile);
     
@@ -2015,6 +2035,9 @@ function handleDiffImport(e) {
     const file = e.target.files[0];
     if (!file) return;
     
+    // Check if we're on the generator page (main page)
+    const isOnMainPage = document.getElementById('generator-page')?.classList.contains('active');
+    
     const reader = new FileReader();
     reader.onload = (event) => {
         try {
@@ -2063,12 +2086,49 @@ function handleDiffImport(e) {
             // Apply restored state to UI
             applyRestoredViewerState();
             
-            updateViewerContent();
+            // If on main page, show success state with animation
+            if (isOnMainPage) {
+                showBundleSuccessState(data);
+            } else {
+                // Already on viewer page, just update content
+                updateViewerContent();
+            }
         } catch (error) {
             alert(`Error importing diff file: ${error.message}`);
         }
     };
     reader.readAsText(file);
+    
+    // Reset the input so the same file can be selected again
+    e.target.value = '';
+}
+
+function showBundleSuccessState(data) {
+    // Hide other states
+    document.getElementById('upload-empty').hidden = true;
+    document.getElementById('upload-files').hidden = true;
+    document.getElementById('config-section').hidden = true;
+    document.getElementById('results-section').hidden = true;
+    
+    // Show bundle success state
+    const bundleSuccess = document.getElementById('bundle-success');
+    bundleSuccess.hidden = false;
+    
+    // Update the info
+    const file1Name = data.meta?.file1Name || 'Original';
+    const file2Name = data.meta?.file2Name || 'Updated';
+    document.getElementById('bundle-file-info').textContent = 
+        `${file1Name} vs ${file2Name}`;
+    
+    // Update stats
+    document.getElementById('bundle-modified').textContent = data.modified?.length || 0;
+    document.getElementById('bundle-added').textContent = data.added?.length || 0;
+    document.getElementById('bundle-removed').textContent = data.removed?.length || 0;
+    
+    // Trigger re-animation by removing and re-adding the element
+    bundleSuccess.style.animation = 'none';
+    bundleSuccess.offsetHeight; // Trigger reflow
+    bundleSuccess.style.animation = '';
 }
 
 function applyRestoredViewerState() {
@@ -2167,6 +2227,13 @@ function clearComparison() {
     // Show empty state, hide viewer content
     document.getElementById('viewer-empty').hidden = false;
     document.getElementById('viewer-content').hidden = true;
+    
+    // Also reset the main page bundle success state if visible
+    const bundleSuccess = document.getElementById('bundle-success');
+    if (bundleSuccess && !bundleSuccess.hidden) {
+        bundleSuccess.hidden = true;
+        document.getElementById('upload-empty').hidden = false;
+    }
     
     // Reset UI controls to defaults
     document.querySelectorAll('.filter-chip').forEach(chip => {
