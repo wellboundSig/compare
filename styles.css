@@ -3343,6 +3343,116 @@ body {
     margin-left: 8px;
 }
 
+/* =========================================
+   Eligibility Export Menu
+   ========================================= */
+.eligibility-export-container {
+    position: relative;
+    display: inline-block;
+}
+
+.eligibility-export-container .dropdown-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-weight: 500;
+}
+
+.eligibility-export-container .dropdown-toggle i:last-child {
+    font-size: 0.75rem;
+    transition: transform 0.2s ease;
+}
+
+.eligibility-export-container .dropdown-toggle.open i:last-child {
+    transform: rotate(180deg);
+}
+
+.eligibility-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 320px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    padding: 8px 0;
+    animation: dropdownIn 0.2s ease;
+}
+
+.dropdown-section-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+
+.eligibility-menu .dropdown-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 16px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    color: var(--text);
+}
+
+.eligibility-menu .dropdown-item:hover {
+    background: var(--bg);
+}
+
+.eligibility-menu .dropdown-item i {
+    font-size: 1rem;
+    color: var(--primary);
+    margin-top: 2px;
+    width: 20px;
+    text-align: center;
+}
+
+.eligibility-menu .dropdown-item[data-export="outreach"] i {
+    color: #f59e0b;
+}
+
+.eligibility-menu .dropdown-item[data-export="billing-hold"] i {
+    color: #ef4444;
+}
+
+.eligibility-menu .dropdown-item[data-export="re-enrollment"] i {
+    color: #22c55e;
+}
+
+.dropdown-item-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dropdown-item-title {
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.dropdown-item-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.eligibility-menu .dropdown-divider {
+    margin: 8px 0;
+    border-top: 1px solid var(--border);
+}
+
 /* Sync Scroll Styles for Highlight Content */
 .highlight-container.sync-scroll .highlight-content {
     scroll-behavior: auto;

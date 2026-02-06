@@ -1834,6 +1834,9 @@ function initializeViewerControls() {
     // Column filter dropdown
     initializeColumnFilterDropdown();
     
+    // Eligibility export menu
+    initializeEligibilityExportMenu();
+    
     // Cell level navigation
     document.getElementById('prevChange')?.addEventListener('click', navigateToPrevChange);
     document.getElementById('nextChange')?.addEventListener('click', navigateToNextChange);
@@ -2284,6 +2287,9 @@ function updateViewerContent() {
         }
     }
     
+    // Show/hide eligibility export menu based on headers
+    updateEligibilityExportVisibility();
+    
     updateViewerPanel();
 }
 
@@ -2308,6 +2314,373 @@ function updateViewerPanel() {
             updateCellsPanel();
             break;
     }
+}
+
+// ========================================
+// Eligibility Export Features
+// ========================================
+
+function hasEligibilityHeaders() {
+    if (!state.headers || state.headers.length === 0) return false;
+    
+    const normalizedHeaders = state.headers.map(h => h.toLowerCase().trim());
+    
+    // Check for variations of the required headers
+    const hasPayorSource = normalizedHeaders.some(h => 
+        h.includes('payor') || h.includes('payer') || h.includes('insurance') || h.includes('source')
+    );
+    const hasEligibilityResult = normalizedHeaders.some(h => 
+        h.includes('eligib') || h.includes('status') || h.includes('result')
+    );
+    
+    return hasPayorSource && hasEligibilityResult;
+}
+
+function updateEligibilityExportVisibility() {
+    const container = document.getElementById('eligibilityExportContainer');
+    if (!container) return;
+    
+    const showMenu = hasEligibilityHeaders();
+    container.hidden = !showMenu;
+}
+
+function initializeEligibilityExportMenu() {
+    const btn = document.getElementById('eligibilityExportBtn');
+    const menu = document.getElementById('eligibilityExportMenu');
+    
+    if (!btn || !menu) return;
+    
+    // Toggle dropdown
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isHidden = menu.hidden;
+        menu.hidden = !isHidden;
+        btn.classList.toggle('open', isHidden);
+    });
+    
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.eligibility-export-container')) {
+            menu.hidden = true;
+            btn.classList.remove('open');
+        }
+    });
+    
+    // Handle export items
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const exportType = item.dataset.export;
+            handleEligibilityExport(exportType);
+            menu.hidden = true;
+            btn.classList.remove('open');
+        });
+    });
+}
+
+function handleEligibilityExport(exportType) {
+    if (!state.diffResult) {
+        alert('No comparison data available');
+        return;
+    }
+    
+    let data = [];
+    let filename = '';
+    
+    switch (exportType) {
+        case 'outreach':
+            data = generateOutreachList();
+            filename = 'patient_outreach_list';
+            break;
+        case 'billing-hold':
+            data = generateBillingHoldList();
+            filename = 'billing_hold_list';
+            break;
+        case 're-enrollment':
+            data = generateReEnrollmentList();
+            filename = 're_enrollment_list';
+            break;
+        case 'hhaexchange':
+            data = generateBillingSystemExport('hhaexchange');
+            filename = 'eligibility_changes_hhaexchange';
+            break;
+        case 'axxess':
+            data = generateBillingSystemExport('axxess');
+            filename = 'eligibility_changes_axxess';
+            break;
+        case 'kantime':
+            data = generateBillingSystemExport('kantime');
+            filename = 'eligibility_changes_kantime';
+            break;
+    }
+    
+    if (data.length === 0) {
+        alert('No records match the criteria for this export.');
+        return;
+    }
+    
+    // Export as CSV
+    downloadEligibilityCSV(data, filename);
+}
+
+function findHeaderByPattern(patterns) {
+    // Find the actual header name that matches any of the patterns
+    for (const header of state.headers) {
+        const normalized = header.toLowerCase().trim();
+        for (const pattern of patterns) {
+            if (normalized.includes(pattern)) {
+                return header;
+            }
+        }
+    }
+    return null;
+}
+
+function getEligibilityColumns() {
+    return {
+        payorColumn: findHeaderByPattern(['payor', 'payer', 'insurance', 'source']),
+        eligibilityColumn: findHeaderByPattern(['eligib', 'status', 'result']),
+        nameColumn: findHeaderByPattern(['name', 'patient', 'member', 'client']),
+        idColumn: findHeaderByPattern(['id', 'mrn', 'member id', 'patient id'])
+    };
+}
+
+function generateOutreachList() {
+    // Patients who need to be contacted - those with eligibility issues
+    const cols = getEligibilityColumns();
+    const results = [];
+    
+    // Include modified rows where eligibility changed to a problematic status
+    state.diffResult.modified.forEach(item => {
+        const eligChange = item.changes.find(c => 
+            c.column.toLowerCase().includes('eligib') || 
+            c.column.toLowerCase().includes('status') ||
+            c.column.toLowerCase().includes('result')
+        );
+        
+        if (eligChange) {
+            const newValue = String(eligChange.newValue || '').toLowerCase();
+            // Flag problematic statuses
+            const isProblematic = 
+                newValue.includes('inelig') || 
+                newValue.includes('inactive') ||
+                newValue.includes('pend') ||
+                newValue.includes('deny') ||
+                newValue.includes('denied') ||
+                newValue.includes('term') ||
+                newValue.includes('expired') ||
+                newValue.includes('no') ||
+                newValue === 'n' ||
+                newValue === '0';
+            
+            if (isProblematic) {
+                results.push({
+                    'Patient Name': item.updated[cols.nameColumn] || item.updated[state.headers[0]] || 'Unknown',
+                    'Patient ID': item.updated[cols.idColumn] || '',
+                    'Payor': item.updated[cols.payorColumn] || '',
+                    'Previous Status': eligChange.oldValue || '',
+                    'Current Status': eligChange.newValue || '',
+                    'Reason': 'Eligibility status changed to problematic',
+                    'Priority': 'High'
+                });
+            }
+        }
+    });
+    
+    // Include removed rows (patients who disappeared from the list)
+    state.diffResult.removed.forEach(item => {
+        results.push({
+            'Patient Name': item.data[cols.nameColumn] || item.data[state.headers[0]] || 'Unknown',
+            'Patient ID': item.data[cols.idColumn] || '',
+            'Payor': item.data[cols.payorColumn] || '',
+            'Previous Status': item.data[cols.eligibilityColumn] || '',
+            'Current Status': 'Not in current file',
+            'Reason': 'Patient removed from eligibility file',
+            'Priority': 'Medium'
+        });
+    });
+    
+    return results;
+}
+
+function generateBillingHoldList() {
+    // Patients whose claims should be held pending verification
+    const cols = getEligibilityColumns();
+    const results = [];
+    
+    // Modified rows where eligibility/payor changed
+    state.diffResult.modified.forEach(item => {
+        const hasEligibilityChange = item.changes.some(c => 
+            c.column.toLowerCase().includes('eligib') || 
+            c.column.toLowerCase().includes('status') ||
+            c.column.toLowerCase().includes('result') ||
+            c.column.toLowerCase().includes('payor') ||
+            c.column.toLowerCase().includes('payer')
+        );
+        
+        if (hasEligibilityChange) {
+            const eligChange = item.changes.find(c => 
+                c.column.toLowerCase().includes('eligib') || 
+                c.column.toLowerCase().includes('status')
+            );
+            const payorChange = item.changes.find(c => 
+                c.column.toLowerCase().includes('payor') || 
+                c.column.toLowerCase().includes('payer')
+            );
+            
+            results.push({
+                'Patient Name': item.updated[cols.nameColumn] || item.updated[state.headers[0]] || 'Unknown',
+                'Patient ID': item.updated[cols.idColumn] || '',
+                'Current Payor': item.updated[cols.payorColumn] || '',
+                'Previous Payor': payorChange ? payorChange.oldValue : item.updated[cols.payorColumn] || '',
+                'Current Eligibility': item.updated[cols.eligibilityColumn] || '',
+                'Previous Eligibility': eligChange ? eligChange.oldValue : '',
+                'Hold Reason': payorChange ? 'Payor changed' : 'Eligibility status changed',
+                'Action Required': 'Verify eligibility before billing'
+            });
+        }
+    });
+    
+    return results;
+}
+
+function generateReEnrollmentList() {
+    // Patients approaching eligibility expiration or needing re-enrollment
+    const cols = getEligibilityColumns();
+    const results = [];
+    
+    // Look for status changes that indicate expiration/re-enrollment needed
+    state.diffResult.modified.forEach(item => {
+        const eligChange = item.changes.find(c => 
+            c.column.toLowerCase().includes('eligib') || 
+            c.column.toLowerCase().includes('status') ||
+            c.column.toLowerCase().includes('result')
+        );
+        
+        if (eligChange) {
+            const newValue = String(eligChange.newValue || '').toLowerCase();
+            const needsReEnrollment = 
+                newValue.includes('expir') || 
+                newValue.includes('renew') ||
+                newValue.includes('recert') ||
+                newValue.includes('pending') ||
+                newValue.includes('review');
+            
+            if (needsReEnrollment) {
+                results.push({
+                    'Patient Name': item.updated[cols.nameColumn] || item.updated[state.headers[0]] || 'Unknown',
+                    'Patient ID': item.updated[cols.idColumn] || '',
+                    'Payor': item.updated[cols.payorColumn] || '',
+                    'Current Status': eligChange.newValue || '',
+                    'Previous Status': eligChange.oldValue || '',
+                    'Action Required': 'Re-enrollment/Recertification needed'
+                });
+            }
+        }
+    });
+    
+    // Also include added patients that might be new enrollments to track
+    state.diffResult.added.forEach(item => {
+        const eligValue = String(item.data[cols.eligibilityColumn] || '').toLowerCase();
+        if (eligValue.includes('pend') || eligValue.includes('new') || eligValue.includes('process')) {
+            results.push({
+                'Patient Name': item.data[cols.nameColumn] || item.data[state.headers[0]] || 'Unknown',
+                'Patient ID': item.data[cols.idColumn] || '',
+                'Payor': item.data[cols.payorColumn] || '',
+                'Current Status': item.data[cols.eligibilityColumn] || '',
+                'Previous Status': 'N/A (New)',
+                'Action Required': 'New enrollment - verify completion'
+            });
+        }
+    });
+    
+    return results;
+}
+
+function generateBillingSystemExport(system) {
+    const cols = getEligibilityColumns();
+    const results = [];
+    
+    // Get all changes
+    const allChanges = [
+        ...state.diffResult.modified.map(item => ({
+            type: 'Modified',
+            data: item.updated,
+            original: item.original,
+            changes: item.changes
+        })),
+        ...state.diffResult.added.map(item => ({
+            type: 'Added',
+            data: item.data,
+            original: null,
+            changes: []
+        })),
+        ...state.diffResult.removed.map(item => ({
+            type: 'Removed',
+            data: item.data,
+            original: item.data,
+            changes: []
+        }))
+    ];
+    
+    allChanges.forEach(item => {
+        // Format based on billing system
+        switch (system) {
+            case 'hhaexchange':
+                results.push({
+                    'PatientID': item.data[cols.idColumn] || '',
+                    'PatientName': item.data[cols.nameColumn] || item.data[state.headers[0]] || '',
+                    'PayerCode': item.data[cols.payorColumn] || '',
+                    'EligibilityStatus': item.data[cols.eligibilityColumn] || '',
+                    'ChangeType': item.type,
+                    'EffectiveDate': new Date().toISOString().slice(0, 10)
+                });
+                break;
+            case 'axxess':
+                results.push({
+                    'Patient_ID': item.data[cols.idColumn] || '',
+                    'Patient_Name': item.data[cols.nameColumn] || item.data[state.headers[0]] || '',
+                    'Insurance_Name': item.data[cols.payorColumn] || '',
+                    'Eligibility_Status': item.data[cols.eligibilityColumn] || '',
+                    'Record_Type': item.type,
+                    'Date_Updated': new Date().toLocaleDateString()
+                });
+                break;
+            case 'kantime':
+                results.push({
+                    'MemberID': item.data[cols.idColumn] || '',
+                    'MemberName': item.data[cols.nameColumn] || item.data[state.headers[0]] || '',
+                    'PayorName': item.data[cols.payorColumn] || '',
+                    'Status': item.data[cols.eligibilityColumn] || '',
+                    'UpdateType': item.type,
+                    'ProcessDate': new Date().toISOString().slice(0, 10)
+                });
+                break;
+        }
+    });
+    
+    return results;
+}
+
+function downloadEligibilityCSV(data, filename) {
+    if (data.length === 0) return;
+    
+    const headers = Object.keys(data[0]);
+    const csvContent = [
+        headers.join(','),
+        ...data.map(row => 
+            headers.map(h => {
+                const val = String(row[h] ?? '');
+                // Escape quotes and wrap in quotes if contains comma or quote
+                if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                    return `"${val.replace(/"/g, '""')}"`;
+                }
+                return val;
+            }).join(',')
+        )
+    ].join('\n');
+    
+    const timestamp = new Date().toISOString().slice(0, 10);
+    downloadFile(csvContent, `${filename}_${timestamp}.csv`, 'text/csv');
 }
 
 function updateSummaryPanel() {
